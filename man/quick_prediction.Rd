@@ -15,7 +15,11 @@ quick_prediction(input_var, name, opt = "consensus")
 \item{opt}{prediction mode whether "consensus" or "logistic"}
 }
 \value{
-a result of predicted cell types for each query cell cluster
+return 2 confusion matrix
+\itemize{
+\item confusion: a confusion matrix of prediction result
+\item all_confusion: a summarized matrix of prediction result in each cell
+}
 }
 \description{
 user-friendly quick prediction for single-cell data

@@ -5,7 +5,7 @@
 \title{make_input_tm_facs}
 \usage{
 make_input_tm_facs(data_list, gene_usage = FALSE, Train = TRUE,
-  ncore = 1)
+  ncore = 1, norm = "log")
 }
 \arguments{
 \item{data_list}{result of import_tm_facs or import_sparse}
@@ -23,6 +23,15 @@ make_input_tm_facs(data_list, gene_usage = FALSE, Train = TRUE,
 }}
 
 \item{ncore}{multi-thread}
+
+\item{norm}{normalization options for matrix
+\itemize{
+\item "log": log-normalization (with pseudo count)
+\item "raw": just uses count matrix
+\item "total": divide by total count of each cell, respectively
+\item "z": z-normalization
+\item "total-log": "total" -> "log" normalization (with pseudo count)
+}}
 }
 \value{
 list of "make_input" results from each tissue (or sample)

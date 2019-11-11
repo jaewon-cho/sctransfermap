@@ -155,14 +155,56 @@ end
 
 ################################################################
 
-function create_signature(name::String, tissue::String, w2v, w2v_index, x::Array{Float64, 2}, xnames::Array{String, 1}, cells::Array{String, 1}, annotation::Array{String, 2}, sdatatype::String, stopwords, xdatatype::String)
+function create_signature(name::String, tissue::String, w2v, w2v_index, x::Array{Float64, 2}, xnames::Array{String, 1}, cells::Array{String, 1}, annotation::Array{String, 2}, sdatatype::String, stopwords, xdatatype::String, mincellfrac, mincellcount, side_limit)
 	if w2v_index
 		s = word2vec_tissue(w2v, vec(annotation[:,2]), stopwords);
 	else
 		s = w2v
 	end
+
 	snames = sort(annotation[:,1]);
-	#sdatatype: cell_ontology filename, or atac
+
+
+	scelltypeunique = sort(unique(snames));
+	celltypesunique = sort(unique(cells));
+
+	if side_limit
+#remove the cell types that are at low frequency in the reference
+		minc = maximum([mincellfrac*size(x,2), mincellcount]);
+		tmp_count = Int64[];
+		for i in 1:length(celltypesunique)
+			push!(tmp_count, length(findall(celltypesunique[i].==cells)));
+		end
+		celltypesunique = celltypesunique[findall(tmp_count.>minc)];
+
+#intersection of celltypes between x matrix and s matrix
+		tmpcelltype_index = indexin(scelltypeunique, celltypesunique);
+		tmpcelltype_index = tmpcelltype_index[findall(tmpcelltype_index.!=nothing)];
+		celltypesunique = celltypesunique[tmpcelltype_index]
+
+#celltypesunique: filtered celltypesunique;
+
+		xindskeep = Int64[];
+		for i in 1:length(celltypesunique)
+			append!(xindskeep, findall(celltypesunique[i].==cells));
+		end
+		sort!(xindskeep);
+		x = x[:,xindskeep];
+		cells = cells[xindskeep];
+#x: filtered x, cells: filtered cells
+
+#filtering celltype from s matrix
+		sind = Int64[];
+		for i in 1:length(celltypesunique)
+			append!(sind, findall(celltypesunique[i].==snames));
+		end
+		sort!(sind);
+		snames = snames[sind];
+		s = s[sind,:];
+	end
+
+#snames: filtered snames, s: filtered s
+#sdatatype: cell_ontology filename, or atac
 	return MappingData(name, tissue, xdatatype, sdatatype, x, cells, xnames, snames, s, snames)
 end
 
@@ -455,7 +497,7 @@ function transfer_map_consensus(indexes::Array{IndexData, 1}, mappingdata::Mappi
 			end
 		end
 	end
-	return confusion;
+	return (confusion, predictions)
 end
 
 
@@ -488,17 +530,26 @@ function normalize_w2v_scores(v::Array{Float64, 1})
 	return (v .- minimum(v))./(maximum(v) - minimum(v));
 end
 
+# a + a/2 + a/3 + ...
+function weighted_sum(array1, res = 0)
+	size = length(array1)
+	for i in 1:size
+		res = res + (array1[i]/i)
+	end
+	return (res)
+end
+
 function word2vec_tissue(w2v::Embeddings.EmbeddingTable, annotations::Array{String, 1}, stopwords::Array{String, 1}, calc::Bool=true)
 	#calc: true -> mean value or w2v_sentence, false -> max value
 	#calculate scores for all cell type descriptions as the mean of their word vectors. Re-scale each vector to the interval [0, 1]
 	d = size(w2v.embeddings, 1);
 	vecs = zeros(length(annotations), d);
 	for i in 1:length(annotations)
-		#vecs[i,:] = mean(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1);
 		if calc
 			vecs[i,:] = normalize_w2v_scores(vec(mean(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)));
 		else
-			vecs[i,:] = normalize_w2v_scores(vec(maximum(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)));
+		#	vecs[i,:] = normalize_w2v_scores(vec(maximum(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)));
+			vecs[i,:] = normalize_w2v_scores(vec(weighted_sum(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)))
 		end
 	end
 	return vecs;

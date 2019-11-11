@@ -6,7 +6,8 @@
 \usage{
 create_signature(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
   Sdatatype, w2v_index = FALSE, Stopwords = stopwords,
-  Xdatatype = "scRNA-seq", R_output = FALSE, celltype_cnt_thr = TRUE)
+  Xdatatype = "scRNA-seq", R_output = FALSE, celltype_cnt_thr = TRUE,
+  mincellfrac = 0.01, mincellcount = 10, side_limit = FALSE)
 }
 \arguments{
 \item{Name}{user-defined name for the output}
@@ -42,6 +43,12 @@ create_signature(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
 \item{R_output}{TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object}
 
 \item{celltype_cnt_thr}{if the number for cell type exceeds, warning message will be sent and return FALSE. To ignore it, change the parameter into FALSE}
+
+\item{Mincellcount}{minimum cell count for a given cell type (works when side_limit: TRUE)}
+
+\item{Mincellfrac}{minimum fraction of cell type (works when side_limit: TRUE)}
+
+\item{side_liimit}{TRUE if user wants to limit their side information as cell types in input data. Otherwise, it will use all the cell types in side information (= FALSE)}
 }
 \value{
 an attribute for ZSL (trained data) (julia object)

@@ -151,7 +151,11 @@ julia_environment <- function(julia_obj_index = FALSE){
 #' @param name any name that user wants for the result
 #' @param opt prediction mode whether "consensus" or "logistic"
 #'
-#' @return a result of predicted cell types for each query cell cluster 
+#' @return return 2 confusion matrix
+#' \itemize{
+#' \item confusion: a confusion matrix of prediction result
+#' \item all_confusion: a summarized matrix of prediction result in each cell
+#' }
 #'
 #' @examples
 #' result <- quick_prediction(matrix, "single-cell")
@@ -183,8 +187,11 @@ quick_prediction <- function(input_var, name, opt = "consensus"){
 		query_res <-  logistic_prediction_cell(julia_obj$attribute_set, julia_obj$meta_model, query_sig, tissue_opt = FALSE, celltype_specific = FALSE)
 	}	
 
-	query_res <- estimate_celltype(query_res[[1]])
-	return (query_res)
+	query_conf <- estimate_celltype(query_res[[1]])
+
+	res_list <- list(query_conf, query_res[[2]])
+	names(res_list) <- c("confusion", "all_confusion") 
+	return (res_list)
 }
 
 #' quick_training
@@ -338,6 +345,14 @@ save_sparse_data <- function(input_var, filename){
 #' \item FALSE: gene/peak_location filtering by discarding low expressing cell ratio genes/peak_locations
 #' \item certain number (ex: 2048): the number of gene to use for training (must be suitable number to generate hadamard matrix)
 #' }
+#' @param norm normalization options for matrix
+#' \itemize{
+#' \item "log": log-normalization (with pseudo count)
+#' \item "raw": just uses count matrix
+#' \item "total": divide by total count of each cell, respectively
+#' \item "z": z-normalization
+#' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' }
 #'
 #' @return return a list variable composed of 4 objects
 #' \itemize{ 
@@ -352,7 +367,7 @@ save_sparse_data <- function(input_var, filename){
 #' data1 <- make_input(input_var, train = TRUE) [training case]
 #'
 #' @export
-make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0, train = FALSE, gene_usage = FALSE){
+make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0, train = FALSE, gene_usage = FALSE, norm = "log"){
 	cat("\nMaking input format for sctransfermap\n")
 	d <- input_var[,which(colnames(input_var) != "NA" & colnames(input_var) != "unknown" & colnames(input_var) != "Unknown")]
 	cellname <- colnames(input_var)[which(colnames(input_var) != "NA" & colnames(input_var) != "unknown")]
@@ -383,7 +398,28 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 		}
 	}
 
-	d <- log2(pseudo_cnt + d)
+	if (norm == "log"){
+		d <- log2(pseudo_cnt + d)
+	}
+	else if (norm == "raw"){
+		d <- d
+	}
+	else if (norm == "total"){
+		cell_total <- apply(d, 2, sum)
+		d <- t(apply(d, 1, "/", cell_total))
+	}
+	else if (norm == "z"){
+		data_colmean <- colMeans(d)
+		data_sd <- apply(d,2,sd)
+		d1 <- t(apply(d, 1, "-", data_colmean))
+		d <- t(apply(d1, 1, "/", data_sd))
+	}
+	else if (norm == "total_log"){
+		cell_total <- apply(d, 2, sum)
+		d1 <- t(apply(d, 1, "/", cell_total))
+		d <- log2(pseudo_cnt + d1)
+	}
+
 	genename <- rownames(d)
 	celltype <- sort(unique(cellname))
 
@@ -434,7 +470,7 @@ make_cellontology <- function(cell_ontology, celltype = c()){
 				res <- rbind(res, cell_ontology[i,])
 				
 			}
-      		}
+	  		}
 	}
 	else {
 		res <- cell_ontology
@@ -523,7 +559,7 @@ generate_sideinformation <- function(Side_mat, Cellnames, Sdim = 200){
 #' att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, annot, "cell_ontology", w2v_index = TRUE)
 #'
 #' @export
-create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology, Sdatatype, w2v_index = FALSE, Xdatatype = "scRNA-seq", Ngene = 64, Stopwords = stopwords, Fdrthr = 0.1, Gamma = 1.0, Lambda = 1.0, Xpeaks = FALSE, Sep = "_", Mincellcount = 10, Mincellfrac = 0.05, Simthres = -Inf, R_output = FALSE){
+create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology, Sdatatype, w2v_index = FALSE, Xdatatype = "scRNA-seq", Ngene = 64, Stopwords = stopwords, Fdrthr = 0.1, Gamma = 1.0, Lambda = 1.0, Xpeaks = FALSE, Sep = "_", Mincellcount = 10, Mincellfrac = 0.01, Simthres = -Inf, R_output = FALSE){
 	name <- JuliaObject(Name)
 	tissue <- JuliaObject(Tissue)
 	#w2v
@@ -581,7 +617,9 @@ create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_on
 #' @param Stopwords julia object of stopwords (the result of make_stopwords)
 #' @param R_output TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object
 #' @param celltype_cnt_thr if the number for cell type exceeds, warning message will be sent and return FALSE. To ignore it, change the parameter into FALSE
-#'
+#' @param Mincellcount minimum cell count for a given cell type (works when side_limit: TRUE)
+#' @param Mincellfrac minimum fraction of cell type (works when side_limit: TRUE)
+#' @param side_liimit TRUE if user wants to limit their side information as cell types in input data. Otherwise, it will use all the cell types in side information (= FALSE)
 #' @return an attribute for ZSL (trained data) (julia object)
 #'
 #' @examples
@@ -592,11 +630,11 @@ create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_on
 #' signature <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, annot, "cell_ontology", w2v_index = TRUE)
 #'
 #' @export
-create_signature <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,Sdatatype, w2v_index = FALSE, Stopwords = stopwords, Xdatatype = "scRNA-seq",  R_output = FALSE, celltype_cnt_thr = TRUE){
+create_signature <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,Sdatatype, w2v_index = FALSE, Stopwords = stopwords, Xdatatype = "scRNA-seq",  R_output = FALSE, celltype_cnt_thr = TRUE, mincellfrac = 0.01, mincellcount = 10, side_limit = FALSE){
 	celltype_cnt = length(unique(Cellname))
 	if (celltype_cnt_thr) {
 		if (celltype_cnt > 1000){
-			cat("\n Too many celltypes to predict (more than 1000). It will take lots of time to predict. If you still want to run, make parameter 'celltype_cnt_thr = FALSE'\n")
+			cat("\n Too many celltypes to predict (more than 1000). It will take lots of time to predict. If you still want to run, make parameter 'celltype_cnt_thr = FALSE'\nIf you want a prediction for each cell, you could get from 'all_confusion' after predicting celltypes[predict_cell or logistic_prediction_cell]. Therefore, to reduce the computational time, make a same cell name for all the cell in your data\n")
 			return (FALSE)
 		}
 	}
@@ -611,13 +649,16 @@ create_signature <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_on
 	#stopwords
 	xdatatype <- JuliaObject(Xdatatype)
 	w2v_index <- JuliaObject(w2v_index)
+	mincellcount <- julia_call("Int64", mincellcount, need_return = "Julia")
+	mincellfrac <- julia_call("Float64", mincellfrac, need_return = "Julia")
+	side_limit <- JuliaObject(side_limit)
 
 	cat("\nMaking signature format of query (or test set) for prediction\n")
 	if (R_output){
-		Map_res <- julia_call("create_signature", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, Stopwords, xdatatype, need_return = "R")
+		Map_res <- julia_call("create_signature", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, Stopwords, xdatatype, mincellcount, mincellfrac, side_limit, need_return = "R")
 	}
 	else {
-		Map_res <- julia_call("create_signature", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, Stopwords, xdatatype, need_return = "Julia")
+		Map_res <- julia_call("create_signature", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, Stopwords, xdatatype, mincellcount, mincellfrac, side_limit, need_return = "Julia")
 	}
 	return (Map_res)
 }
@@ -726,11 +767,10 @@ make_signature_set <- function(signature){
 #' @param gn_overlap_thr minimum gene overlap ratio of attribute in attribute set between query data 
 #' @param R_output TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object
 #'
-#' @return a confusion matrix of prediction result
+#' @return return 2 confusion matrix
 #' \itemize{
-#' \item row: query cell type or cluster name
-#' \item column: cell types in side-information (from query)
-#' \item first column: unassign count
+#' \item confusion: a confusion matrix of prediction result
+#' \item all_confusion: a summarized matrix of prediction result in each cell
 #' }
 #'
 #' @examples
@@ -748,9 +788,18 @@ predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, R_ou
 	gn_overlap_thr <- JuliaObject(gn_overlap_thr)
 	cat("\nPredicting celltype by model from ZSL in consensus manner with various tissue\n")
 	if (R_output){
-		confusion <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, need_return = "R")
-		
+		confusion_list <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, need_return = "R")
+		confusion <- confusion_list[1]
 
+		#modify all_confusion
+		all_confusion <- as.matrix(confusion_list[2])
+		total_cell_name <- field(query, "celltypes")
+		sname <- field(query, "snames")
+		rownames(all_confusion) <- total_cell_name
+		colnames(all_confusion) <- sname
+		all_confusion <- decorate_all_confusion(all_confusion)
+
+		#modify confusion
 		y <- table(field(query, "celltypes"))
 		tmp <- JuliaObject(field(query, "celltypes"))
 		tmp <- julia_call("unique", tmp, need_return = "Julia")
@@ -759,13 +808,18 @@ predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, R_ou
 		new_index <- r2julia_sort(y_cell_list, julia_cell_list)
 		y <- y[new_index]
 		cellnames <- y_cell_list[new_index]
+		confusion <- decorate_confusion(confusion, y, cellnames, sname)
 
-		confusion <- decorate_confusion(confusion, y, cellnames, field(query, "snames"))
+
+		confusion_list <- list(confusion, all_confusion)
+		names(confusion_list) <- c("confusion", "all_confusion")
+		return(confusion_list)
+
 	}
 	else {
-		confusion <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, need_return = "Julia")
+		confusion_list <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, need_return = "Julia")
+		return(confusion_list)
 	}
-	return (confusion)
 }
 
 #' r2julia_sort
@@ -799,8 +853,33 @@ r2julia_sort <- function(r_list, julia_list, Index = TRUE){
 	}
 }
 
-
-
+#' decorate_all_confusion
+#'
+#' make a summarized format of all_confusion matrix (internal function of predict_cell)
+#'
+#' @param all_confusion all_confusion matrix from "transfer_map_consensus" function in Julia (which has rowname and colname)
+#'
+#' @return summarized format of all_confusion matrix
+#'
+#' @examples
+#' NA
+#'
+#' @export
+decorate_all_confusion <- function(all_confusion){
+	assign_sum <- apply(all_confusion, 1, sum)
+	tmp_conf <- matrix(nrow = dim(all_confusion)[1], ncol = 1)
+	rownames(tmp_conf) <- rownames(all_confusion)
+	colnames(tmp_conf) <- "prediction"
+	for (i in 1:dim(all_confusion)[1]){
+		if (assign_sum[i] == 0){
+			tmp_conf[i,1] <- "unassign"
+		}
+		else {
+			tmp_conf[i,1] <- names(which(all_confusion[i,] == 1))
+		}
+	}
+	return (tmp_conf)
+}
 
 #' decorate_confusion
 #'
@@ -855,31 +934,41 @@ confusion_ratio <- function(confusion) {
 #'
 #' validation of known data
 #'
-#' @param conf_ratio confusion ratio matrix from confusion_ratio 
+#' @param conf confusion ratio matrix from confusion_ratio or just confusion matrix from predict_cell
+#' @param opt TRUE if conf is a confusion matrix and FALSE if conf is a confusion_ratio matrix
 #'
 #' @return True postivie rate and unassign ratio for each cell type, respectively 
 #'
 #' @examples
 #' confusion <- predict_cell(att_set, signature)
-#' conf_ratio <- confusion_ratio(conf_ratio)
-#' conf_val <- validation(conf_ratio)
+#' conf_val <- validation(confusion, opt = TRUE)
 #'
 #' @export
-validation <- function(conf_ratio){
+validation <- function(conf, opt = FALSE){
 	tp = c()
-	unassign = conf_ratio[,1]
-	for (i in c(1:dim(conf_ratio)[1])){
-		tp_index <- which(colnames(conf_ratio)==rownames(conf_ratio)[i])
-		tp <- c(tp, conf_ratio[i,tp_index])
-
+	if (opt){
+		conf_raw <- conf
+		conf <-  confusion_ratio(conf)
+	}
+	unassign = conf[,1]
+	for (i in c(1:dim(conf)[1])){
+		tp_index <- which(colnames(conf)==rownames(conf)[i])
+		tp <- c(tp, conf[i,tp_index])
 	}
 	tp <- as.matrix(tp)
 	unassign <- as.matrix(unassign)
-	res<-cbind(tp, unassign)
-	colnames(res) <- c("TP", "Unassign")
-	rownames(res) <- rownames(conf_ratio)
-	return(res)
 
+	if (opt){
+		total_cell_cnt <- apply(conf_raw, 1, sum)
+		res <- cbind(tp, unassign, total_cell_cnt)
+		colnames(res) <- c("TP", "Unassign", "total_cell_number")
+	}
+	else {
+		res <- cbind(tp, unassign)
+		colnames(res) <- c("TP", "Unassign")
+	}
+	rownames(res) <- rownames(conf)
+	return(res)
 }
 
 #' create_meta_index_av
@@ -1041,7 +1130,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 #' @return return 2 confusion matrix 
 #' \itemize{
 #' \item confusion: a confusion matrix of prediction result
-#' \item all_confusion: a confusion matrix of prediction result in each cell
+#' \item all_confusion: a summarized matrix of prediction result in each cell
 #' }
 #'
 #' @examples
@@ -1149,6 +1238,7 @@ logistic_prediction_cell <- function(iscell, meta_model_list, query, gn_overlap_
 
 	confusion <- matrix(0,nrow = length(celltype), ncol = length(model_celltype))
 	confusion <- data.frame(confusion)
+	rownames(all_confusion) <- cells
 	all_confusion <- data.frame(all_confusion)
 	##
 
@@ -1272,6 +1362,8 @@ logistic_prediction_cell <- function(iscell, meta_model_list, query, gn_overlap_
 	confusion <- decorate_confusion(confusion, y, new_celltype, reordered_model_celltype)
 	all_confusion <- all_confusion[,new_index_col]
 	colnames(all_confusion) <- reordered_model_celltype
+	all_confusion <- decorate_all_confusion(all_confusion)
+
 	res_list <- list(confusion, all_confusion)
 	names(res_list) <- c("confusion", "all_confusion")
 	return (res_list)

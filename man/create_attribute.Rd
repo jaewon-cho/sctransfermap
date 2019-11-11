@@ -7,7 +7,7 @@
 create_attribute(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
   Sdatatype, w2v_index = FALSE, Xdatatype = "scRNA-seq", Ngene = 64,
   Stopwords = stopwords, Fdrthr = 0.1, Gamma = 1, Lambda = 1,
-  Xpeaks = FALSE, Sep = "_", Mincellcount = 10, Mincellfrac = 0.05,
+  Xpeaks = FALSE, Sep = "_", Mincellcount = 10, Mincellfrac = 0.01,
   Simthres = -Inf, R_output = FALSE)
 }
 \arguments{

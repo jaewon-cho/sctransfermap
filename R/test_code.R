@@ -126,6 +126,14 @@ sparse_tm_facs <- function(tm_facs){
 #' \item FALSE: no gene/peak_location filtering
 #' }
 #' @param ncore multi-thread
+#' @param norm normalization options for matrix
+#' \itemize{
+#' \item "log": log-normalization (with pseudo count)
+#' \item "raw": just uses count matrix
+#' \item "total": divide by total count of each cell, respectively
+#' \item "z": z-normalization
+#' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' }
 #'
 #' @return list of "make_input" results from each tissue (or sample)
 #'
@@ -134,7 +142,7 @@ sparse_tm_facs <- function(tm_facs){
 #' tm_facs_input <- make_input_tm_facs(tm_facs)
 #'
 #' @export
-make_input_tm_facs <- function(data_list, gene_usage = FALSE, Train = TRUE, ncore = 1){
+make_input_tm_facs <- function(data_list, gene_usage = FALSE, Train = TRUE, ncore = 1, norm = "log"){
 	registerDoParallel(ncore)
 	start_time <- Sys.time()
 	tissue_name <- names(data_list)
@@ -142,7 +150,7 @@ make_input_tm_facs <- function(data_list, gene_usage = FALSE, Train = TRUE, ncor
 		tissue_name <- names(data_list)[i]
 		print(tissue_name)
 		data <- data_list[[i]]
-		d <- make_input(data, train = Train, gene_usage = gene_usage)
+		d <- make_input(data, train = Train, gene_usage = gene_usage, norm = norm)
 	}
 
 	names(tm_facs_input) <- tissue_name
@@ -192,6 +200,7 @@ tissue_merge <- function(tissue){
 #' @param annot cell_ontology (julia object)
 #' @param data_name name for the signature
 #' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param side_limit TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)
 #' @return signature set
 #'
 #' @examples
@@ -203,7 +212,7 @@ tissue_merge <- function(tissue){
 #' sig_set <- make_tm_facs_signature_set(tm_facs_input, side_info, cell_ontology, "user", "cell_ontology")
 #'
 #' @export
-make_tm_facs_signature_set <- function(tm_facs_input, s, annot, data_name, sdatatype){
+make_tm_facs_signature_set <- function(tm_facs_input, s, annot, data_name, sdatatype, side_limit = FALSE){
 	start_time <- Sys.time()
 	head = TRUE
 	for(i in 1:length(tm_facs_input)){
@@ -211,7 +220,8 @@ make_tm_facs_signature_set <- function(tm_facs_input, s, annot, data_name, sdata
 		print(tissue_name)
 		tissue_name <- tissue_merge(tissue_name)		
 		d <- tm_facs_input[[i]]
-		d_sig <- create_signature(data_name, tissue_name, s, d[[1]], d[[2]], d[[3]], annot, sdatatype, Stopwords = JuliaObject(""))
+		d_sig <- create_signature(data_name, tissue_name, s, d[[1]], d[[2]], d[[3]], annot, sdatatype, Stopwords = JuliaObject(""), side_limit = side_limit)
+
 		if (head){
 			tm_facs_signature_set <- make_signature_set(d_sig)
 			head = FALSE
@@ -316,10 +326,11 @@ leave_one_val <-function(att_set, sig_set){
 
 		tmp_tissue <- field(sig_set[i], "tissue")
 		print(tmp_tissue)
-		tmp_res <- predict_cell(new_iscell, sig_set[i])
-		
+		tmp_res_list <- predict_cell(new_iscell, sig_set[i])
+		tmp_res <- tmp_res_list[[1]]
+
 		tmp_ratio <- confusion_ratio(tmp_res)
-		tmp_val <- validation(tmp_ratio)		
+		tmp_val <- validation(tmp_res, opt = TRUE)		
 
 		res_list[[i]] <- tmp_res
 		ratio_list[[i]] <- tmp_ratio
@@ -433,7 +444,7 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 		tmp_res <- logistic_prediction_cell(att_set, meta_model, sig_set[i], tissue_opt = Tissue_opt, celltype_specific = celltype_specific)
 		tmp_res <- as.matrix(tmp_res[[1]])
 		tmp_ratio <- confusion_ratio(tmp_res)
-		tmp_val <- validation(tmp_ratio)	
+		tmp_val <- validation(tmp_res, opt = TRUE)	
 	
 		res_list[[i]] <- tmp_res
 		ratio_list[[i]] <- tmp_ratio
@@ -454,18 +465,183 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 	proc_time <- end_time - start_time
 	print(proc_time)
 	total_res_list <- list(res_list, ratio_list, val_list, tissue_list, f1_list, unassign_list)
-    names(total_res_list) <- c("conf_list", "conf_ratio_list", "val_list", "tissue_list", "f1_list", "unassign_list")
-    return (total_res_list)
+	names(total_res_list) <- c("conf_list", "conf_ratio_list", "val_list", "tissue_list", "f1_list", "unassign_list")
+	return (total_res_list)
 }
 
-#tm_facs: result of data_list from import_tm_facs
-#k: ratio between ZSL(1) and logistic regression modeling (k) (k=1 -> ZSL:glm = 1:1, k=2 -> ZSL:glm = 1:2)
-#during logistic regression modeling and test step -> data won't have any gene filtering
-#' Title
+#' n_fold_zsl
 #'
-#' Description
+#' N-fold validation for ZSL. 
 #'
-#' @param tm_facs result of import_tm_facs
+#' @param tm_facs list variable of importdata (same as import_tm_facs or import_sparse or list of importdata)
+#' @param gene_usage option for gene/peak_location filtering to make hadamard matrix
+#' @param s side-infomration (julia object)
+#' @param annot cell_ontology (julia object)
+#' @param mincell TRUE if user wants to give minimum cell type thresholding
+#' @param Ngene a number of vector size after JL transformation
+#' @param data_name name for the attribute
+#' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param fdrthr fdr threshold for calculating similarity score during training
+#' @param n the number for "N"-fold validation
+#' @param side_limit TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)
+#' @param norm normalization options for matrix
+#' \itemize{
+#' \item "log": log-normalization (with pseudo count)
+#' \item "raw": just uses count matrix
+#' \item "total": divide by total count of each cell, respectively
+#' \item "z": z-normalization
+#' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' }
+#'
+#' @return n-fold list composed of 6 results: conf_list, conf_ratio_list, val_list, tissue_list, f1_list, unassign_list
+#' \itemize{
+#' \item n_fold: all the results needs n-fold index (ex: res$1_fold$conf_list: conf_list)
+#' \item conf_list: confusion matrix
+#' \item conf_ratio_list: ratio_list (confusion_ratio_matrix)
+#' \item val_list: validation matrix
+#' \item tissue_list
+#' \item f1_list: f1 score
+#' \item unassign_list
+#' }
+#'
+#' @examples
+#' tm_facs <- input_tm_facs("address")
+#' w2v <- make_w2v("Pubmed.index")
+#' cell_ontology <- make_cellontology("cell_ontogloy_file")
+#' stopword <- make_stopwords(stopwords)
+#' side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
+#' res <- n_fold_zsl(tm_facs, 2048, side_info, cell_ontology, FALSE, 64, "user", "cell_ontology")
+#' 
+#' @export
+n_fold_zsl <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name, sdatatype, fdrthr = 0.1, n = 5, side_limit = FALSE, norm = "log"){
+	start_time <- Sys.time()	
+	n_fold_res <- list()
+	res_list <- list()
+	ratio_list <- list()
+	val_list <- list()
+	tissue_list <- c()
+	f1_list <- c()
+	unassign_list <- c()
+
+	for (n_index in 5:n){
+		paste("\n\n", n_index, "/",  n, "-fold change test round\n\n", sep = "")
+		val_list <- list()
+		zsl_list <- list()
+		for (i in 1:length(tm_facs)){
+
+			tissue_name <- names(tm_facs)[i]
+			print(tissue_name)
+			tmp_raw <- tm_facs[[i]]
+			tmp_cells <- colnames(tmp_raw)
+			tmp_raw <- tmp_raw[,which(colnames(tmp_raw) != "NA" & colnames(tmp_raw) != "unknown")]
+
+
+			cell_number <- length(colnames(tmp_raw))
+			random_cell_index <- sample(1:cell_number, cell_number, replace = FALSE)
+
+			tmp_raw <- tmp_raw[,random_cell_index]
+			tmp_cells <- tmp_cells[which(tmp_cells != "NA" & tmp_cells != "unknown")]
+			tmp_cells <- tmp_cells[random_cell_index]
+			tmp_celltype <- sort(unique(tmp_cells))
+			val_cell_index_total <- c()
+			zsl_train_index_total <- c()
+			for (j in 1:length(tmp_celltype)){
+				j_tmp_celltype <- tmp_celltype[j]
+				tmp_cell_index <- which(tmp_cells == j_tmp_celltype)
+
+
+				tmp_size <- round(length(tmp_cell_index) / n)
+
+
+				if (n_index == n){
+					 val_cell_index <- tmp_cell_index[(1 + (tmp_size * (n_index-1))):length(tmp_cell_index)]
+				}
+				else{
+					val_cell_index <- tmp_cell_index[(1 + (tmp_size * (n_index-1))):(tmp_size * (n_index))]
+				}
+				zsl_train_index <-setdiff(tmp_cell_index, val_cell_index)
+				val_cell_index_total <- c(val_cell_index_total, val_cell_index)
+				zsl_train_index_total <- c(zsl_train_index_total, zsl_train_index)
+			}
+			val_raw <- tmp_raw[,val_cell_index_total]
+			zsl_raw <- tmp_raw[,zsl_train_index_total]
+
+			cat("Make input for 'validation set' and 'zsl set'\n")
+			val_input <- make_input(val_raw, norm = norm)
+			zsl_input <- make_input(zsl_raw, train = TRUE, gene_usage = Gene_usage, norm = norm)
+
+			val_list[[i]] <- val_input
+			names(val_list)[i] <- tissue_name
+			zsl_list[[i]] <- zsl_input
+			names(zsl_list)[i] <- tissue_name
+		}
+		sig_set <- make_tm_facs_signature_set(val_list, s, annot, data_name, sdatatype, side_limit = side_limit)
+		att_set <- make_tm_facs_attribute_set(zsl_list, s, annot, mincell, data_name, sdatatype, ngene = Ngene, fdrthr = fdrthr)
+	
+
+		for (i in 1:length(sig_set)){
+			tmp_tissue <- field(sig_set[i], "tissue")
+			print(tmp_tissue)
+			tmp_res_list <- predict_cell(att_set[i], sig_set[i])
+			tmp_res <- tmp_res_list[[1]]
+
+			tmp_ratio <- confusion_ratio(tmp_res)
+			tmp_val <- validation(tmp_res, opt = TRUE)
+
+			res_list[[i]] <- tmp_res
+			ratio_list[[i]] <- tmp_ratio
+			val_list[[i]] <- tmp_val
+			tissue_list <- c(tissue_list, tmp_tissue)
+
+			tmp_val_sample <- validation_sample(tmp_res)
+			f1_score <- tmp_val_sample[[1]]
+			unassign <- tmp_val_sample[[2]]
+
+			f1_list <- c(f1_list, f1_score)
+			unassign_list <- c(unassign_list, unassign)
+		}
+		total_res_list <- list(res_list, ratio_list, val_list, tissue_list, f1_list, unassign_list)
+		names(total_res_list) <- c("conf_list", "conf_ratio_list", "val_list", "tissue_list", "f1_list", "unassign_list")
+		n_fold_res[[n_index]] <- total_res_list
+		names(n_fold_res)[n_index] <- paste(n_index, "fold", sep = "_")
+
+		end_time <- Sys.time()
+		proc_time <- end_time - start_time
+		print(proc_time)
+
+	}
+	return (n_fold_res)
+}
+
+
+
+#' n_fold_logistic
+#'
+#' N-fold validation for logistic regression model. Uses training data for ZSL and logistic regression modeling independently (determined by "k").
+#'
+#' @param tm_facs list variable of importdata (same as import_tm_facs or import_sparse or list of importdata)
+#' @param gene_usage option for gene/peak_location filtering to make hadamard matrix
+#' @param s side-infomration (julia object)
+#' @param annot cell_ontology (julia object)
+#' @param mincell TRUE if user wants to give minimum cell type thresholding
+#' @param Ngene a number of vector size after JL transformation
+#' @param data_name name for the attribute
+#' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param fdrthr fdr threshold for calculating similarity score during training
+#' @param n the number for "N"-fold validation
+#' @param k ratio between ZSL(1) and logistic regression modeling (k) (k=1 -> ZSL:glm = 1:1, k=2 -> ZSL:glm = 1:2)
+#' @param tissue_opt TRUE if user wants to find tissue-origin
+#' @param Celltype_specific TRUE if user wants to calculate the weight fo each tissue with only matched cell type. Otherwise, weight for each tissue will be calculated with whole celltypes (deault: FALSE; tissue_opt should be TRUE to use this parameter)
+#' @param ncore the number of cores for multi-threading
+#' @param side_limit TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)
+#' @param norm normalization options for matrix
+#' \itemize{
+#' \item "log": log-normalization (with pseudo count)
+#' \item "raw": just uses count matrix
+#' \item "total": divide by total count of each cell, respectively
+#' \item "z": z-normalization
+#' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' }
 #'
 #' @return att_set, meta_set, logistic_result
 #' \itemize{
@@ -484,7 +660,7 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 #' res <- n_fold_logistic(tm_facs, 2048, side_info, cell_ontology, FALSE, 64, "user", "cell_ontology")
 #' 
 #' @export
-n_fold_logistic <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name, sdatatype, fdrthr = 0.1, n = 5, k = 1, tissue_opt = FALSE, Celltype_specific = FALSE, ncore = 1){
+n_fold_logistic <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name, sdatatype, fdrthr = 0.1, n = 5, k = 1, tissue_opt = FALSE, Celltype_specific = FALSE, ncore = 1, side_limit = FALSE, norm = "log"){
 	tm_att_result<- list()
 	tm_meta_result <- list()
 	tm_logistic_result <- list()
@@ -545,9 +721,9 @@ n_fold_logistic <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_
 			glm_raw <- tmp_raw[,glm_train_index_total]
 		
 			cat("Make input for 'validation set', 'zsl set', and 'glm set'\n")				
-			val_input <- make_input(val_raw)
-			zsl_input <- make_input(zsl_raw, train = TRUE, gene_usage = Gene_usage)
-			glm_input <- make_input(glm_raw)
+			val_input <- make_input(val_raw, norm = norm)
+			zsl_input <- make_input(zsl_raw, train = TRUE, gene_usage = Gene_usage, norm = norm)
+			glm_input <- make_input(glm_raw, norm = norm)
 			
 			val_list[[i]] <- val_input
 			names(val_list)[i] <- tissue_name
@@ -558,9 +734,9 @@ n_fold_logistic <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_
 								
 		}
 		cat("\n\nSignature for GLM\n")
-		tm_sig_glm_set <- make_tm_facs_signature_set(glm_list, s, annot, data_name, sdatatype)
+		tm_sig_glm_set <- make_tm_facs_signature_set(glm_list, s, annot, data_name, sdatatype, side_limit = side_limit)
 		cat("\nSignature for Valdiation")
-		tm_sig_val_set <- make_tm_facs_signature_set(val_list, s, annot, data_name, sdatatype)
+		tm_sig_val_set <- make_tm_facs_signature_set(val_list, s, annot, data_name, sdatatype, side_limit = side_limit)
 		tm_att_set <- make_tm_facs_attribute_set(zsl_list, s, annot, mincell, data_name, sdatatype, ngene = Ngene, fdrthr = fdrthr)
 
 		meta <- create_meta_index_av(tm_att_set, tm_sig_glm_set, ncore = ncore)

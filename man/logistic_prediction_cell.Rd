@@ -27,7 +27,7 @@ logistic_prediction_cell(iscell, meta_model_list, query,
 return 2 confusion matrix 
 \itemize{
 \item confusion: a confusion matrix of prediction result
-\item all_confusion: a confusion matrix of prediction result in each cell
+\item all_confusion: a summarized matrix of prediction result in each cell
 }
 }
 \description{

@@ -4,7 +4,8 @@
 \alias{make_tm_facs_signature_set}
 \title{make_tm_facs_signature_set}
 \usage{
-make_tm_facs_signature_set(tm_facs_input, s, annot, data_name, sdatatype)
+make_tm_facs_signature_set(tm_facs_input, s, annot, data_name, sdatatype,
+  side_limit = FALSE)
 }
 \arguments{
 \item{tm_facs_input}{result of make_input_tm_facs}
@@ -16,6 +17,8 @@ make_tm_facs_signature_set(tm_facs_input, s, annot, data_name, sdatatype)
 \item{data_name}{name for the signature}
 
 \item{sdatatype}{type of side-information (cell_ontology, ATAC-seq, or user-defined term)}
+
+\item{side_limit}{TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)}
 }
 \value{
 signature set
