@@ -347,11 +347,11 @@ save_sparse_data <- function(input_var, filename){
 #' }
 #' @param norm normalization options for matrix
 #' \itemize{
-#' \item "log": log-normalization (with pseudo count)
-#' \item "raw": just uses count matrix
-#' \item "total": divide by total count of each cell, respectively
-#' \item "z": z-normalization
-#' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' \item "log": log-normalization after gene filtering(with pseudo count)
+#' \item "raw": just uses count matrix after gene filtering
+#' \item "total": divide by total count of each cell, respectively (before gene filtering)
+#' \item "z": z-normalization after gene filtering
+#' \item "total-log": "total" -> "log" normalization before gene filtering (with pseudo count)
 #' }
 #'
 #' @return return a list variable composed of 4 objects
@@ -381,9 +381,9 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 		d <- d[genes_order,]
 		genes <- genes[genes_order]
 		genes_cond <- which(genes > min_thr & genes < max_thr)
-		d <- d[genes_cond,]
+		d_tmp <- d[genes_cond,]
 	
-		tmp_cnt = dim(d)[1]
+		tmp_cnt <- dim(d_tmp)[1]
 		hadamard_number <- 512 * round(floor(tmp_cnt/512))
 	
 		if (hadamard_number < 512){
@@ -391,24 +391,37 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 			return(FALSE)
 		}
 		if (gene_usage){
-			d <- d[1:gene_usage,]
+			d_tmp <- d_tmp[1:gene_usage,]
 		}
 		else{
-			d <- d[1:hadamard_number,]
+			d_tmp <- d_tmp[1:hadamard_number,]
 		}
 	}
 
+	
 	if (norm == "log"){
+		d <- d_tmp
 		d <- log2(pseudo_cnt + d)
 	}
 	else if (norm == "raw"){
+		d <- d_tmp
 		d <- d
 	}
 	else if (norm == "total"){
 		cell_total <- apply(d, 2, sum)
 		d <- t(apply(d, 1, "/", cell_total))
+		d <- d[genes_cond,]
+		if (train) {
+			if (gene_usage){
+				d <- d[1:gene_usage,]
+			}
+			else {
+				d <- d[1:hadamard_number,]
+			}
+		}
 	}
 	else if (norm == "z"){
+		d <- d_tmp
 		data_colmean <- colMeans(d)
 		data_sd <- apply(d,2,sd)
 		d1 <- t(apply(d, 1, "-", data_colmean))
@@ -418,6 +431,14 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 		cell_total <- apply(d, 2, sum)
 		d1 <- t(apply(d, 1, "/", cell_total))
 		d <- log2(pseudo_cnt + d1)
+		if (train) {
+			if (gene_usage){
+				d <- d[1:gene_usage,]
+			}
+			else {
+				d <- d[1:hadamard_number,]
+			}
+		}
 	}
 
 	genename <- rownames(d)
