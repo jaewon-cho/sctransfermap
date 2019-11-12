@@ -351,7 +351,7 @@ save_sparse_data <- function(input_var, filename){
 #' \item "raw": just uses count matrix after gene filtering
 #' \item "total": divide by total count of each cell, respectively (before gene filtering)
 #' \item "z": z-normalization after gene filtering
-#' \item "total-log": "total" -> "log" normalization before gene filtering (with pseudo count)
+#' \item "total_log": "total" -> "log" normalization before gene filtering (with pseudo count)
 #' }
 #'
 #' @return return a list variable composed of 4 objects
@@ -375,6 +375,7 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 	genesize <- dim(d)[2]
 	genes <- rowSums(d!=0) / genesize
 
+	d_tmp <- d
 #hadamard matrix is only needed in trainset
 	if (train) {
 		genes_order <- order(genes, decreasing = TRUE)
