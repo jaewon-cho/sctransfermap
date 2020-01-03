@@ -26,10 +26,18 @@ mutable struct MappingData
 	stypenames::Array{String, 1}
 end
 
+mutable struct Sideinfo
+	sdatatype::String
+	s::Array{Float64, 2}
+	stypenames::Array{String, 1}
+	snames::Array{String, 1}
+	fjlts::Array{Float64, 2}
+end
+
 ##############################################################
 function load_emb(WordIndexFile)
-	  res = load_embeddings(Word2Vec, WordIndexFile);
-	  return res;
+	res = load_embeddings(Word2Vec, WordIndexFile);
+	return res;
 end
 
 function IndexList(index1, iscell = IndexData[])
@@ -48,6 +56,27 @@ function leave_one(iscell, index)
 	return tmp_iscell
 end
 
+function rowname_match(datatype::String, index_xnames, map_xnames; sep = "_")
+	if datatype == "w2v"
+		index_inds = Array(1:length(index_xnames))
+		map_inds = Array(1:length(map_xnames))
+
+	elseif datatype == "scRNA-seq" || datatype == "discrete"	
+		index_inds = indexin(map_xnames, index_xnames)
+		index_inds= (index_inds[findall(index_inds.!=nothing)]);	
+		map_inds = indexin(index_xnames, map_xnames)
+		map_inds = (map_inds[findall(map_inds.!=nothing)])
+
+	elseif datatype == "scATAC-seq" || datatype == "range"
+		ci, pi = parse_peak_locations(index_xnames, sep=sep)
+		cm, pm = parse_peak_locations(map_xnames, sep=sep)
+		index_inds, map_inds = find_overlapping_peak_inds(ci, pi, cm, pm)
+
+	end
+
+	return [index_inds, map_inds]
+end
+
 function Geneoverlap(overlap_cnt::Int64, train_cnt::Int64, overlap_thr::Float64)
 	#overlap_cnt: length(indexgeneinds)
 	#train_cnt: length(indexes[k].xnames)
@@ -61,16 +90,18 @@ function Geneoverlap(overlap_cnt::Int64, train_cnt::Int64, overlap_thr::Float64)
 	#false: pass the threshold: just for code readability
 end
 
-function make_sideinfo(w2v, annotation, stopwords, CALC)
-	#CALC: true -> mean, false -> max for w2v_sentences score
-	s = word2vec_tissue(w2v, vec(annotation[:,2],), stopwords, CALC);
-	return s
+function make_w2v_sideinfo(w2v, annotation, stopwords, sdatatype, norm)
+	#norm: mean, max, median, weighted_sum, weighted_abs_sum
+	s = word2vec_tissue(w2v, vec(annotation[:,2],), stopwords, norm = norm);
+	#sdatatype = "w2v"
+
+	return Sideinfo("w2v", s, annotation[:,1], ["NA", "NA"], Matrix{Float64}(I, 0, 0))
 end
 
 ###############################################################
 # ATAC-seq data processing #
 
-function parse_peak_locations(peaklocs::Array{String, 1}, sep::String="_")
+function parse_peak_locations(peaklocs::Array{String, 1}; sep::String="_")
 	peaklocs = hcat(convert.(Array{String, 1}, split.(peaklocs, sep))...);
 	pos = parse.(Int, peaklocs[2:3,:]);
 	return peaklocs[1,:], pos;
@@ -126,19 +157,23 @@ end
 
 # extract normalized centroids (c-min/max-min: min, max: celltype, respectively) for celltypes from JL-transformed matrix by collecting median of values matched with target celltype
 # making new side information from matrix (cell and gene exp or atac seq peak count ...)
-function generate_sideinformation(s::Array{Float64, 2}, cells::Array{String, 1}, sdim::Int64)
+function calculate_centroids(s::Array{Float64, 2}, cells::Array{String, 1}, fjlts, snames, sdatatype; norm = "median")
 	celltypesunique = sort(unique(cells));
 	
-	fjlts = FastJLTransformation(size(s,1), sdim);
 
 	centroids = zeros(length(celltypesunique), size(fjlts, 1));
 	for i in 1:length(celltypesunique)
-		centroids[i,:] = median(fjlts*s[:, findall(cells.==celltypesunique[i])], dims=2);
+		centroids[i,:] = represent_sideinfo_scores(fjlts*s[:, findall(cells.==celltypesunique[i])], opt = norm, dims = 2, vec_size_dim = 1);
 		#scale the centroids so that they are in the interval [0, 1]
 		centroids[i, :] = (centroids[i, :] .- minimum(centroids[i, :]))./(maximum(centroids[i, :]) - minimum(centroids[i, :]));
+	
 	end
-	return centroids;
+	#sdatatype: scRNA-seq, scATAC-seq
+
+	return Sideinfo(sdatatype, s, celltypesunique, snames, fjlts)
 end
+
+
 
 # excludeinds: exclude combination (celltype A,B): extract index from total cell, keepinds, index for remaining celltypes
 function get_excluded_celltypeinds(celltypes::Array{String, 1}, excludetypeinds; celltypesunique::Array{String, 1}=String[])
@@ -153,20 +188,14 @@ function get_excluded_celltypeinds(celltypes::Array{String, 1}, excludetypeinds;
 	return excludeinds, keepinds
 end
 
+
 ################################################################
 
-function create_signature(name::String, tissue::String, w2v, w2v_index, x::Array{Float64, 2}, xnames::Array{String, 1}, cells::Array{String, 1}, annotation::Array{String, 2}, sdatatype::String, stopwords, xdatatype::String, mincellfrac, mincellcount, side_limit)
-	if w2v_index
-		s = word2vec_tissue(w2v, vec(annotation[:,2]), stopwords);
-	else
-		s = w2v
-	end
+function create_signature(name::String, tissue::String, x::Array{Float64, 2}, xnames::Array{String, 1}, cells::Array{String, 1}, xdatatype::String, sdatatype::String, s::Array{Float64, 2}, stypenames::Array{String, 1}, snames::Array{String, 1}, mincellfrac, mincellcount, side_limit)
 
-	snames = sort(annotation[:,1]);
-
-
-	scelltypeunique = sort(unique(snames));
+	scelltypeunique = sort(unique(stypenames));
 	celltypesunique = sort(unique(cells));
+
 
 	if side_limit
 #remove the cell types that are at low frequency in the reference
@@ -196,28 +225,28 @@ function create_signature(name::String, tissue::String, w2v, w2v_index, x::Array
 #filtering celltype from s matrix
 		sind = Int64[];
 		for i in 1:length(celltypesunique)
-			append!(sind, findall(celltypesunique[i].==snames));
+			append!(sind, findall(celltypesunique[i].==stypenames));
 		end
 		sort!(sind);
-		snames = snames[sind];
-		s = s[sind,:];
+		stypenames = stypenames[sind];
+
+		if sdatatype == "w2v"
+			s = s[sind,:];
+		else
+			s = s[:,sind]
+		end
 	end
 
-#snames: filtered snames, s: filtered s
+#stypenames: filtered stypenames, s: filtered s
 #sdatatype: cell_ontology filename, or atac
-	return MappingData(name, tissue, xdatatype, sdatatype, x, cells, xnames, snames, s, snames)
+	return MappingData(name, tissue, xdatatype, sdatatype, x, cells, xnames, snames, s, stypenames)
 end
 
-function create_attribute(name::String, tissue::String, w2v, w2v_index, x::Array{Float64, 2}, xnames::Array{String, 1}, cells::Array{String, 1}, annotation::Array{String,2}, sdatatype::String, xdatatype::String, ngenes::Int64, stopwords, fdrthreshold::Float64, gamma::Float64, lambda::Float64, xpeaks::Bool, sep::String, mincellfrac::Float64, mincellcount::Int64, simthres)
-	if w2v_index
-		s = word2vec_tissue(w2v, vec(annotation[:,2]), stopwords);
-	else
-		s = w2v
-	end
-
-	snames = sort(annotation[:,1]);
-	scelltypeunique = sort(unique(snames));
+function create_attribute(name::String, tissue::String, x::Array{Float64, 2}, xnames::Array{String, 1}, cells::Array{String, 1}, xdatatype::String, ngenes::Int64, fdrthreshold::Float64, gamma::Float64, lambda::Float64, sep::String, sdatatype::String, s::Array{Float64, 2}, stypenames::Array{String, 1}, snames::Array{String, 1}, sdim::Int64, mincellfrac::Float64, mincellcount::Int64, simthres, norm)
+	scelltypeunique = sort(unique(stypenames));
 	celltypesunique = sort(unique(cells));
+
+	
 	
 	#remove the cell types that are at low frequency in the reference
 	minc = maximum([mincellfrac*size(x,2), mincellcount]);	
@@ -246,24 +275,38 @@ function create_attribute(name::String, tissue::String, w2v, w2v_index, x::Array
 #filtering celltype from s matrix
 	sind = Int64[];
 	for i in 1:length(celltypesunique)
-		append!(sind, findall(celltypesunique[i].==snames));
+		append!(sind, findall(celltypesunique[i].==stypenames));
 	end
 	sort!(sind);
-	snames = snames[sind];
-	s = s[sind,:];
-	#snames: filtered snames, s: filtered s
+	stypenames = stypenames[sind];
+
+	if sdatatype == "w2v"
+		s = s[sind,:];
+	else
+		s = s[:,sind]
+	end
+
+	#stypenames: filtered stypenames, s: filtered s
+
+	fjlts = Matrix{Float64}(I,0,0)
+	if sdatatype != "w2v"
+		fjlts = FastJLTransformation(size(s, 1), sdim)
+		sideinfo = calculate_centroids(s, stypenames, fjlts, snames, sdatatype, norm)
+		s = sideinfo.s
+		stypenames = sideinfo.stypenames
+	end
 
 	assignment = get_assignments(cells, celltypesunique = celltypesunique);
 
 	fjltx = FastJLTransformation(size(x, 1), ngenes);
 	println("Creating index ")
 	if (fdrthreshold>0) & (length(celltypesunique)>4) #find out what threshold is required 
-		simthres = estimate_similarity_threshold(s, x, fjltx, assignment, cells, celltypesunique, fdrthreshold, xnames, snames, xpeaks=xpeaks, sep=sep, fjlts=Matrix{Float64}(I, 0, 0))
+		simthres = estimate_similarity_threshold(s, x, fjltx, assignment, cells, celltypesunique, fdrthreshold, xnames, snames, stypenames, xdatatype, sdatatype, sep=sep, fjlts=fjlts)
 	elseif (fdrthreshold>0) & (length(celltypesunique)<=4)
 		println("Unable to calculate threshold as there are only " * string(length(celltypesunique)) * " cell-types present.")
 	end
 	v = create_index_cluster(s, fjltx*x, assignment);
-	return IndexData(name, tissue, xdatatype, sdatatype, celltypesunique, xnames, snames, v, fjltx, Matrix{Float64}(I, 0, 0), simthres);
+	return IndexData(name, tissue, xdatatype, sdatatype, celltypesunique, xnames, snames, v, fjltx, fjlts, simthres);
 end
 
 
@@ -278,10 +321,10 @@ function create_index_cluster(s::Array{Float64, 2}, x::Array{Float64, 2}, y::Arr
 end
 
 				
-function create_meta_index(indexes::Array{IndexData, 1}, mappingdata::MappingData, gn_overlap_thr::Float64)
+function create_meta_index(indexes::Array{IndexData, 1}, mappingdata::MappingData, sep, gn_overlap_thr::Float64)
 	#Build a logistic regression model to combine the outputs of the several classifiers. This method is intended to be used for cross-modality problems. The idea is to train the model using the side information from a different training dataset to emulate the situation where we get entirely new cell type descriptions. This should allow us to be more confident about which of the indexes will produce the most reliable outcome
 
-	scelltypes = mappingdata.snames;
+	scelltypes = mappingdata.stypenames;
 
 
 
@@ -289,21 +332,43 @@ function create_meta_index(indexes::Array{IndexData, 1}, mappingdata::MappingDat
 	meta_tissue = []
 	for j in 1:length(indexes) #find the prediction for each index
 		m = [];
-		mapgeneinds = indexin(indexes[j].xnames, mappingdata.xnames);
-		mapgeneinds = unique(mapgeneinds[findall(mapgeneinds.!=nothing)]);
-		indexgeneinds = indexin(mappingdata.xnames, indexes[j].xnames);
-		indexgeneinds = unique(indexgeneinds[findall(indexgeneinds.!=nothing)]);
-		gn_overlap_flag = Geneoverlap(length(indexgeneinds), length(indexes[j].xnames), gn_overlap_thr)
-		if gn_overlap_flag
-			continue
-		#false: overlap
-		end
+		if indexes[j].xdatatype != mappingdata.xdatatype || indexes[j].sdatatype != mappingdata.sdatatype
+				println("datatype of traing model:" * string(j) * " isn't match with query data")
+				println("The user could reduce the overlap ratio by adjusting parameter 'gn_overlap_thr'. However, less than 50 % would result in poor prediction")
+				continue
+			end
 
-		
+			matching_xinds = rowname_match(mappingdata.xdatatype, indexes[j].xnames, mappingdata.xnames, sep = sep)
+			indexgene_xinds = matching_xinds[1]
+			mapgene_xinds = matching_xinds[2]
+
+
+			matching_sinds = rowname_match(mappingdata.sdatatype, indexes[j].snames, mappingdata.snames, sep = sep)
+			indexgene_sinds = matching_sinds[1]
+			mapgene_sinds = matching_sinds[2]
+
+			gn_overlap_flag_x = Geneoverlap(length(indexgene_xinds), length(indexes[j].xnames), gn_overlap_thr)
+
+			gn_overlap_flag_s = Geneoverlap(length(indexgene_sinds), length(indexes[j].snames), gn_overlap_thr)
+
+			if gn_overlap_flag_x || gn_overlap_flag_s
+				continue
+			#false: overlap
+			end
+
+			#for the case of w2v
+			s = mappingdata.s
+
+			if mappingdata.sdatatype != "w2v"
+				sideinfo = calculate_centroids(mappingdata.s[mapgene_sinds,:], mappingdata.stypenames, indexes[j].fjlts[:,indexgene_sinds], mappingdata.snames[mapgene_sinds], mappingdata.sdatatype, norm)
+
+				s = sideinfo.s
+			end
+
 
 		#need to add an additional category to allow for unassigned as well when using the meta index
 		for i in 1:size(mappingdata.x, 2)
-			push!(m, prediction_zsl(indexes[j].fjltx[:,indexgeneinds]*mappingdata.x[mapgeneinds, i], indexes[j].v, convert(Array{Float64, 2}, mappingdata.s')));
+			push!(m, prediction_zsl(indexes[j].fjltx[:,indexgene_xinds]*mappingdata.x[mapgene_xinds, i], indexes[j].v, convert(Array{Float64, 2}, mappingdata.s')));
 		end
 		push!(meta_tissue, indexes[j].tissue)
 		push!(ms, m);
@@ -313,7 +378,7 @@ function create_meta_index(indexes::Array{IndexData, 1}, mappingdata::MappingDat
 end
 
 # difference btw estimate_similarity_threshold_centroid: calculate centroid with only keepinds of s matrix
-function estimate_similarity_threshold(s::Array{Float64, 2}, x::Array{Float64, 2}, fjltx::Array{Float64, 2}, assignment::Array{Int64, 2}, celltypes::Array{String, 1}, celltypesunique::Array{String, 1}, fdrthreshold::Float64, xnames::Array{String, 1}, snames::Array{String, 1}; nexcludetypes::Int64=2, xpeaks::Bool=false, sep::String="_", fjlts::Array{Float64, 2}=Matrix{Float64}(I, 0, 0))
+function estimate_similarity_threshold(s::Array{Float64, 2}, x::Array{Float64, 2}, fjltx::Array{Float64, 2}, assignment::Array{Int64, 2}, celltypes::Array{String, 1}, celltypesunique::Array{String, 1}, fdrthreshold::Float64, xnames::Array{String, 1}, snames::Array{String, 1}, stypenames::Array{String, 1}, xdatatype, sdatatype; nexcludetypes::Int64=2, sep::String="_", fjlts::Array{Float64, 2}=Matrix{Float64}(I, 0, 0))
 
 							 
 	#enumerate the combinations
@@ -326,14 +391,12 @@ function estimate_similarity_threshold(s::Array{Float64, 2}, x::Array{Float64, 2
 		#println("Estimating threshold while excluding types " * celltypesunique[excludetypeinds[1]] * " and " * celltypesunique[excludetypeinds[2]])
 		keeptypeinds = setdiff(1:length(celltypesunique), excludetypeinds);
 		excludeinds, keepinds = get_excluded_celltypeinds(celltypes, excludetypeinds; celltypesunique=celltypesunique);
-		#v = create_index_cluster(centroids[keeptypeinds,:], fjltx*x[:,keepinds], assignment[keepinds, keeptypeinds]);
 		centroids = s[keeptypeinds,:]
 		v = create_index_cluster(centroids, fjltx*x[:,keepinds], assignment[keepinds, keeptypeinds]);
 
-		#index = create_index("", "", assignment[keepinds, keeptypeinds], x[:,keepinds], 0, centroids, celltypes[keepinds], xnames, snames, fjltx=fjltx, fjlts=fjlts);
-		index = IndexData("", "", "", "", celltypesunique[keeptypeinds], xnames, [""], v, fjltx, fjlts, -Inf);
-		mappingdata = MappingData("", "", "", "", x[:,excludeinds], celltypes[excludeinds], xnames, snames, s[excludetypeinds,:], celltypesunique[excludetypeinds]);
-		confusion, scores, correctscores = transfer_map_for_thr(index, mappingdata, xpeaks=xpeaks, sepindex=sep, sepmap=sep)
+		index = IndexData("", "", xdatatype, sdatatype, celltypesunique[keeptypeinds], xnames, snames, v, fjltx, fjlts, -Inf);
+		mappingdata = MappingData("", "", xdatatype, sdatatype, x[:,excludeinds], celltypes[excludeinds], xnames, snames, s[excludetypeinds,:], celltypesunique[excludetypeinds]);
+		confusion, scores, correctscores = transfer_map_for_thr(index, mappingdata, sepindex=sep, sepmap=sep)
 		#find out what threshold is required to have no more than fdrthreshold false positives
 
 		tmp_thr_info = find_similarity_threshold(vec(scores), correctscores, fdrthreshold);
@@ -412,24 +475,10 @@ end
 				
 ##################################################################
 
-function transfer_map_for_thr(index::IndexData, mappingdata::MappingData; xpeaks::Bool=false, sepindex::String="_", sepmap::String="_", simthres::Float64=Inf)
-	celltypesuniquemapping = sort(unique(mappingdata.snames));
+function transfer_map_for_thr(index::IndexData, mappingdata::MappingData; sepindex::String="_", sepmap::String="_", simthres::Float64=Inf)
+	celltypesuniquemapping = sort(unique(mappingdata.stypenames));
 	celltypesuniquedata = sort(unique(mappingdata.celltypes));
 	confusion = zeros(Int, length(celltypesuniquedata), length(celltypesuniquemapping));
-	#find the genes that are required for the index
-	indexxinds = Int[];
-	mapxinds = Int[];
-	if (xpeaks) 
-		ci, pi = parse_peak_locations(index.xnames, sep=sepindex);
-		cm, pm = parse_peak_locations(mappingdata.xnames, sep=sepmap);
-		indexxinds, mapxinds = find_overlapping_peak_inds(ci, pi, cm, pm);
-		println("Found " * string(length(mapxinds)) * " peaks in common for the data.")
-	else
-		indexxinds = indexin(mappingdata.xnames, index.xnames);
-		indexxinds = (indexxinds[findall(indexxinds.!=nothing)]);
-		mapxinds = indexin(index.xnames, mappingdata.xnames);
-		mapxinds = (mapxinds[findall(mapxinds.!=nothing)]);
-	end
 
 	centroids = convert(Array{Float64, 2}, mappingdata.s);
 
@@ -439,7 +488,10 @@ function transfer_map_for_thr(index::IndexData, mappingdata::MappingData; xpeaks
 	for i in 1:length(celltypesuniquedata)
 		exinds = findall(mappingdata.celltypes.==celltypesuniquedata[i]);
 		for j in 1:length(exinds)
-			tmp = predict_max_celltype(index.fjltx[:,indexxinds]*mappingdata.x[mapxinds, exinds[j]], index.v, convert(Array{Float64, 2}, centroids'); returnscore=true);
+
+#mappingdata.x[mapxinds, exinds[j]]
+
+			tmp = predict_max_celltype(index.fjltx*mappingdata.x[:, exinds[j]], index.v, convert(Array{Float64, 2}, centroids'); returnscore=true);
 			if (tmp[1]>index.simthres) | (tmp[1]>simthres)
 				confusion[i,tmp[2]] += 1;
 				if tmp[2]==i
@@ -452,35 +504,54 @@ function transfer_map_for_thr(index::IndexData, mappingdata::MappingData; xpeaks
 	return confusion, scores, correctscores
 end
 
-							
-							
-							
-							
-function transfer_map_consensus(indexes::Array{IndexData, 1}, mappingdata::MappingData, simthres::Float64, gn_overlap_thr::Float64)
-	celltypesuniquemapping = mappingdata.snames;
+
+function transfer_map_consensus(indexes::Array{IndexData, 1}, mappingdata::MappingData, simthres::Float64, gn_overlap_thr::Float64; sep = "_", norm = "median")
+	celltypesuniquemapping = mappingdata.stypenames;
 	celltypesuniquedata = sort(unique(mappingdata.celltypes));
 	confusion = zeros(Int, length(celltypesuniquedata), length(celltypesuniquemapping));
 	#find the genes that are required for the index
 	predictions = zeros(Int, size(mappingdata.x, 2), length(celltypesuniquemapping));
+	
 	for k in 1:length(indexes)
 		println("Tissue from ZSL: " * string(k) * "/" * string(length(indexes))) 
 		if indexes[k].simthres < Inf
-			mapgeneinds = indexin(indexes[k].xnames, mappingdata.xnames);
-			mapgeneinds = unique(mapgeneinds[findall(mapgeneinds.!=nothing)]);
+			if indexes[k].xdatatype != mappingdata.xdatatype || indexes[k].sdatatype != mappingdata.sdatatype
+				println("datatype of traing model:" * string(k) * " isn't match with query data") 
+				println("The user could reduce the overlap ratio by adjusting parameter 'gn_overlap_thr'. However, less than 50 % would result in poor prediction")
+				continue
+			end
 
-			indexgeneinds = indexin(mappingdata.xnames, indexes[k].xnames);
-			indexgeneinds = unique(indexgeneinds[findall(indexgeneinds.!=nothing)]);
-			gn_overlap_flag = Geneoverlap(length(indexgeneinds), length(indexes[k].xnames), gn_overlap_thr)
-			if gn_overlap_flag
+			matching_xinds = rowname_match(mappingdata.xdatatype, indexes[k].xnames, mappingdata.xnames, sep = sep)
+			indexgene_xinds = matching_xinds[1]
+			mapgene_xinds = matching_xinds[2]
+
+			
+			matching_sinds = rowname_match(mappingdata.sdatatype, indexes[k].snames, mappingdata.snames, sep = sep)
+			indexgene_sinds = matching_sinds[1]
+			mapgene_sinds = matching_sinds[2]
+
+			gn_overlap_flag_x = Geneoverlap(length(indexgene_xinds), length(indexes[k].xnames), gn_overlap_thr)
+
+			gn_overlap_flag_s = Geneoverlap(length(indexgene_sinds), length(indexes[k].snames), gn_overlap_thr)
+
+			if gn_overlap_flag_x || gn_overlap_flag_s
 				continue
 			#false: overlap	
 			end
-			
+
+			#for the case of w2v			
+			s = mappingdata.s
+
+			if mappingdata.sdatatype != "w2v"
+				sideinfo = calculate_centroids(mappingdata.s[mapgene_sinds,:], mappingdata.stypenames, indexes[k].fjlts[:,indexgene_sinds], mappingdata.snames[mapgene_sinds], mappingdata.sdatatype, norm)
+					
+				s = sideinfo.s
+			end
 
 			for i in 1:length(celltypesuniquedata)
 				exinds = findall(mappingdata.celltypes.==celltypesuniquedata[i]);
 				for j in 1:length(exinds)
-					tmp = predict_max_celltype(indexes[k].fjltx[:,indexgeneinds]*mappingdata.x[mapgeneinds, exinds[j]], indexes[k].v, convert(Array{Float64, 2}, mappingdata.s'); returnscore=true);
+					tmp = predict_max_celltype(indexes[k].fjltx[:,indexgene_xinds]*mappingdata.x[mapgene_xinds, exinds[j]], indexes[k].v, convert(Array{Float64, 2}, s'); returnscore=true);
 					if (tmp[1]>indexes[k].simthres) | (tmp[1]>simthres)
 						predictions[exinds[j], tmp[2]] += 1;
 					end
@@ -521,36 +592,62 @@ function parse_annotation_file(filename::String)
 	return annotation[sortperm(vec(annotation[:,1])),:];
 end
 
-function normalize_w2v_scores(v::Array{Float32, 1})
+function normalize_sideinfo_scores(v::Array{Float32, 1})
 	#The ESZSL algorithm prefers attributes in the range [0, 1], so we need to re-scale
 	return (v .- minimum(v))./(maximum(v) - minimum(v));
 end
 
-function normalize_w2v_scores(v::Array{Float64, 1})
+function normalize_sideinfo_scores(v::Array{Float64, 1})
+	#The ESZSL algorithm prefers attributes in the range [0, 1], so we need to re-scale
 	return (v .- minimum(v))./(maximum(v) - minimum(v));
 end
 
+#opt: mean, max, median, weigthed_sum
+function represent_sideinfo_scores(vecs; opt="mean", dims=1, vec_size_dim=2)
+#word2vec: [n word, 200], dims = 1, vec_size_dim = 2
+#sideinfo: [genes/peaks, cells] 
+	if opt == "mean"
+		vecs = mean(vecs, dims = dims)
+	elseif opt == "median"
+		vecs = median(vecs, dims = dims)
+	elseif opt == "max"
+		vecs = maximum(vecs, dims = dims)
+	elseif opt == "weighted_sum"
+		vecs = weighted_sum(vecs, dims = dims, vec_size_dim = vec_size_dim)
+	elseif opt == "weighted_abs_sum"
+		vecs = weighted_abs_sum(vecs, dims = dims, vec_size_dim = vec_size_dim)
+	end	
+	return (vecs)
+end
+
 # a + a/2 + a/3 + ...
-function weighted_sum(array1, res = 0)
-	size = length(array1)
-	for i in 1:size
-		res = res + (array1[i]/i)
+function weighted_sum(vecs; dims = 1, vec_size_dim = 2)
+	res = zeros(1, size(vecs)[vec_size_dim])
+	vecs = sort(vecs, dims = dims, rev = true)
+	for i in 1:size(vecs)[1]
+		res = res + transpose(vecs[i,:]/i)
 	end
 	return (res)
 end
 
-function word2vec_tissue(w2v::Embeddings.EmbeddingTable, annotations::Array{String, 1}, stopwords::Array{String, 1}, calc::Bool=true)
-	#calc: true -> mean value or w2v_sentence, false -> max value
+function weighted_abs_sum(vecs; dims = 1, vec_size_dim = 2)
+	res = zeros(1, size(vecs)[vec_size_dim])
+	vecs = sort(abs.(vecs), dims = dims, rev = true)
+	for i in 1:size(vecs)[1]
+		res = res + transpose(vecs[i,:]/i)
+	end
+	return (res)
+end
+
+
+function word2vec_tissue(w2v::Embeddings.EmbeddingTable, annotations::Array{String, 1}, stopwords::Array{String, 1}; norm::String="mean")
+	#norm: mean, median, max, weighted_sum of scores from same celltype
 	#calculate scores for all cell type descriptions as the mean of their word vectors. Re-scale each vector to the interval [0, 1]
 	d = size(w2v.embeddings, 1);
 	vecs = zeros(length(annotations), d);
 	for i in 1:length(annotations)
-		if calc
-			vecs[i,:] = normalize_w2v_scores(vec(mean(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)));
-		else
-		#	vecs[i,:] = normalize_w2v_scores(vec(maximum(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)));
-			vecs[i,:] = normalize_w2v_scores(vec(weighted_sum(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], dims=1)))
-		end
+		vecs[i,:] = normalize_sideinfo_scores(vec(represent_sideinfo_scores(word2vec_sentence(w2v, convert(String, annotations[i]), stopwords)[1], opt = norm)));
+		
 	end
 	return vecs;
 end
@@ -567,12 +664,10 @@ function word2vec_sentence(w2v::Embeddings.EmbeddingTable, desc::String, stopwor
 	for i in 1:length(tokens)
 		ind = findfirst(w2v.vocab.=="\n" * tokens[i]);
 		if ind!=nothing
-			#vecs = vcat(vecs, normalize_w2v_scores(w2v.embeddings[:,ind])');
 			vecs = vcat(vecs, w2v.embeddings[:,ind]');
 		else #try with lower case
 			ind = findfirst(w2v.vocab.=="\n" * lowercasefirst(tokens[i]));
 			if ind!=nothing
-				#vecs = vcat(vecs, normalize_w2v_scores(w2v.embeddings[:,ind])');
 				vecs = vcat(vecs, w2v.embeddings[:,ind]');
 			end
 		end

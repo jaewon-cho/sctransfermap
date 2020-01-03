@@ -11,7 +11,7 @@
 #' \item SingleCellExperiment: SingleCellExperiment rds file
 #' \item sparse: MatrixMarket format (written by writeMM)
 #' }
-#' @param datatype "RNAseq" or "atac"
+#' @param datatype "scRNA-seq" or "scATAC-seq"
 #' @param colname_file colname_file for sparse matrix (usually cell name), when opt is "sparse". Otherwise, it is FALSE
 #' @param rowname_file rowname_file for sparse matrix (gene name: official gene symbol or peak location), when opt is "sparse". Otherwise, it is FALSE
 #' @param row_opt indicates the column number that sholud be used for the gene(peak) name
@@ -25,14 +25,14 @@
 #' - for sparse matrix file
 #'
 #' @export
-importdata <- function(file, opt = "raw", datatype = "RNAseq", colname_file = FALSE, rowname_file = FALSE, row_opt = 1){
+importdata <- function(file, opt = "raw", datatype = "scRNA-seq", colname_file = FALSE, rowname_file = FALSE, row_opt = 1){
 	if (opt == "SingleCellExperiment"){
 		tmp_data <- readRDS(file)
 		e <- as.matrix(counts(tmp_data))
-		if (datatype == "RNAseq"){
+		if (datatype == "scRNA-seq"){
 			colnames(e) <- as.character(colData(tmp_data)$cell_type1)
 		}
-		else if (datatype == "atac"){
+		else if (datatype == "scATAC-seq"){
 			colnames(e) <- as.character(colData(tmp_data)$cell_label)
 		}
 		rownames(e) <- as.character(rownames(tmp_data))
@@ -144,11 +144,20 @@ julia_environment <- function(julia_obj_index = FALSE){
 #' quick_prediction
 #'
 #' user-friendly quick prediction for single-cell data
-#' side-information is cell ontology
+#' side-information is cell ontology (w2v)
 #'
 #' @param input_var matrix class composed of gene/peak_location(row)-by-cell(column)\cr
 #' - same as result of importdata or convert_seurat
 #' @param name any name that user wants for the result
+#' @param tissue tissue of the sample (please make sure the word of tissue must be same as pre-existing tissue list. If it is a new tissue type, it doesn't matter)
+#' \itemize{
+#' \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
+#' }
+#' @param xdatatype type of Expr
+#' \itemize{
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
 #' @param opt prediction mode whether "consensus" or "logistic"
 #'
 #' @return return 2 confusion matrix
@@ -158,13 +167,13 @@ julia_environment <- function(julia_obj_index = FALSE){
 #' }
 #'
 #' @examples
-#' result <- quick_prediction(matrix, "single-cell")
+#' result <- quick_prediction(matrix, "single-cell", "Heart", "scRNA-seq")
 #' - prediction by consensus results of ZSL
-#' result <- quick_prediction(matirx, "single-cell", opt = "logistic")
+#' result <- quick_prediction(matirx, "single-cell", "Heart", "scRNA-seq", opt = "logistic")
 #' - prediction by logistic regression
 #'
 #' @export
-quick_prediction <- function(input_var, name, opt = "consensus"){
+quick_prediction <- function(input_var, name, tissue, xdatatype, opt = "consensus"){
 #opt: consensus, single (or tissue name), logistic
 
 	cat("\nBefore running this code, user should make matrix object for single-cell data (col: cell, row: gene).\n")
@@ -175,9 +184,10 @@ quick_prediction <- function(input_var, name, opt = "consensus"){
 
 
 	sct_input <- make_input(input_var)
-	#julia_obj$side_information <- imported side information (by celltype2vec)
+	#julia_obj$side_information <- imported side information (by celltype2vec): Sideinfo variable
 	#julia_obj$annotation <- imported information of celltype in side information
-	query_sig <- create_signature(name, "query_tissue", julia_obj$side_information, sct_input[[1]], sct_input[[2]], sct_input[[3]],  julia_obj$annotation, "cellontology", Stopwords = JuliaObject(""))
+	w2v_side <- julia_obj$side_information
+	query_sig <- create_signature(name, tissue, sct_input[[1]], sct_input[[2]], sct_input[[3]], w2v_side, Xdatatype = xdatatype)
 
 	#julia_obj$attribute_set <- attribute set ('V' matrix) from each tissue
 	if (opt == "consensus"){
@@ -205,6 +215,11 @@ quick_prediction <- function(input_var, name, opt = "consensus"){
 #' \itemize{ 
 #' \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
 #' }
+#' @param Xdatatype type of Expr
+#' \itemize{
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
 #'
 #' @return an attribute for ZSL (trained data in julia object)
 #'
@@ -215,7 +230,7 @@ quick_prediction <- function(input_var, name, opt = "consensus"){
 #' att_set <- add_attribute_set(att_lung, att_set)
 #'
 #' @export
-quick_training <- function(input_var, name, tissue){
+quick_training <- function(input_var, name, tissue, xdatatype){
 	cat("\nBefore running this code, user should make matrix object for single-cell data (col: cell, row: gene).\n")
 
 	cat("\nImporting Julia object\n")
@@ -224,8 +239,9 @@ quick_training <- function(input_var, name, tissue){
 	sct_input <- make_input(input_var)
 	#julia_obj$side_information <- imported side information (by celltype2vec)
 	#julia_obj$annotation <- imported information of celltype in side information
+	w2v_side <- julia_obj$side_information	
 
-	train_att <- create_attribute(name, tissue, julia_obj$side_information, sct_input[[1]], sct_input[[2]], sct_input[[3]], julia_obj$annotation, "cellontology", Stopwords = JuliaObject(""))
+	train_att <- create_attribute(name, tissue, sct_input[[1]], sct_input[[2]], sct_input[[3]], w2v_side, Xdatatype = xdatatype)
 	return (train_att)
 
 
@@ -238,10 +254,24 @@ quick_training <- function(input_var, name, tissue){
 #' @param w2v_obj the result of make_w2v
 #' @param cell_ontology_obj the result of make_cellontology
 #' @param stopword the result of make_stopwords
-#' @param opt TRUE if mean value for word2vector, FALSE if max value for word2vector
+#' @param norm normalization method for word2vector
+#' \itemize{
+#' \item "mean"
+#' \item "median"
+#' \item "max"
+#' \item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+#' \item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+#' }
 #'
 #' @return side information of cell_ontology in julia object
-#'
+#' \itemize{
+#' \item field(side_info, "sdatatype"): "w2v"
+#' \item field(side_info, "s"): score matrix
+#' \item field(side_info, "stypenames"): cell types of w2v
+#' \item field(side_info, "snames"): ["NA"]
+#' \item field(side_info, "fjlts"): identity matrix
+#' }
+#' 
 #' @examples
 #' w2v <- make_w2v("Pubmed.index")
 #' cell_ontology <- make_cellontology("cell_ontogloy_file")
@@ -249,15 +279,16 @@ quick_training <- function(input_var, name, tissue){
 #' side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
 #' 
 #' @export
-make_w2v_sideinfo <- function(w2v_obj, cell_ontology_obj, stopword, opt = TRUE,  R_output = FALSE){
+make_w2v_sideinfo <- function(w2v_obj, cell_ontology_obj, stopword, norm = "mean", R_output = FALSE){
 	cat("\nGenerating side information or word2vec. Use side information object with w2v_index = FALSE during create_signature or create_attribute\n")
 
-	opt <- JuliaObject(opt)
+	sdatatype <- JuliaObject("w2v")
+	norm <- JuliaObject(norm)
 	if (R_output) {
-		s <- julia_call("make_sideinfo", w2v, cell_ontology_obj, stopword, opt, need_return = "R")
+		s <- julia_call("make_w2v_sideinfo", w2v, cell_ontology_obj, stopword, sdatatype, norm, need_return = "R")
 	}
 	else {
-		s <- julia_call("make_sideinfo", w2v, cell_ontology_obj, stopword, opt, need_return = "Julia")
+		s <- julia_call("make_w2v_sideinfo", w2v, cell_ontology_obj, stopword, sdatatype, norm, need_return = "Julia")
 	}
 	return (s)
 }
@@ -411,8 +442,8 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 	else if (norm == "total"){
 		cell_total <- apply(d, 2, sum)
 		d <- t(apply(d, 1, "/", cell_total))
-		d <- d[genes_cond,]
 		if (train) {
+			d <- d[genes_cond,]		
 			if (gene_usage){
 				d <- d[1:gene_usage,]
 			}
@@ -433,6 +464,7 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 		d1 <- t(apply(d, 1, "/", cell_total))
 		d <- log2(pseudo_cnt + d1)
 		if (train) {
+			d <- d[genes_cond,]
 			if (gene_usage){
 				d <- d[1:gene_usage,]
 			}
@@ -510,31 +542,6 @@ make_cellontology <- function(cell_ontology, celltype = c()){
 	return (res)
 }
 
-#' generate_sideinformation
-#'
-#' generation of side-information from expression or peak matrix
-#'
-#' @param Side_mat matrix class composed of gene/peak_location(row)-by-cell(column)\cr
-#' - same as result of importdata or convert_seurat
-#' @param cellnames cell name of Side_mat (column name)
-#' @param Sdim the size of side-information for each cell type
-#'
-#' @return a side-information which could be directly used in create_siganture or create_attribute with w2v_index = FALSE (julia_object)
-#'
-#' @examples
-#' d <- make_input(input_var)
-#' s <- generate_sideinformation(d$norm_matrix, d$cellname)
-#' - result should be directly used with w2v_index = FALSE
-#'
-#' @export
-generate_sideinformation <- function(Side_mat, Cellnames, Sdim = 200){
-	side_mat <- JuliaObject(Side_mat)
-	cellname <- JuliaObject(Cellname) 
-	sdim <- julia_call("Int64", Sdim, need_return = "Julia")
-	res <- julia_call("generate_sideinformation", side_mat, cellname, sdim, need_return = "Julia")
-	return (res)
-}
-
 
 #' create_attribute
 #'
@@ -544,71 +551,105 @@ generate_sideinformation <- function(Side_mat, Cellnames, Sdim = 200){
 #' @param Tissue tissue of the sample (please make sure the word of tissue must be same as pre-existing tissue list. If it is new tissue type, it doesn't matter)
 #' \itemize{
 #' \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
-#'}
-#' @param w2v word2vector object
-#' \itemize{
-#' \item output of make_w2v
-#' \item pre-existing side-information object (julia object) (ex: julia_obj$side_information) 
-#' \item output of generate_sideinformation
 #' }
 #' @param Expr expression/peak matrix (d <- make_input(input_var), d$norm_matrix)
 #' @param Rowname gene/peak_location of Expr (d<- make_input(input_var), d$rowname) 
 #' @param Cellname cellname of Expr (d<- make_input(input_var), d$cellname)
-#' @param cell_ontology julia object of cell ontology (the result of make_cellontology)
-#' @param Sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param side_info matrix or w2v object depends on w2v_index
+#' \itemize{
+#' \item (gene or peak) matrix of side information (if w2v_index = FALSE)
+#' \item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+#' }
 #' @param w2v_index TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists
-#' @param Xdatatype type of Expr (scRNA-seq or scATAC-seq)
-#' @param Ngene a number of vector size after JL transformation
-#' @param Stopwords julia object of stopwords (the result of make_stopwords)
+#' @param snames gene/peak_location of matrix for side information (if w2v_index = FALSE)
+#' @param stypenames cellname of matrix for side information (if w2v_index = FALSE)
+#' @param sdim a number of vector size after JL transformation for side information
+#' @param Xdatatype type of Expr 
+#' \itemize{
+#' \item scRNA-seq 
+#' \item scATAC-seq
+#' }
+#' @param Ngene a number of vector size after JL transformation for "X" matrix
 #' @param Fdrthr fdr threshold for calculating similarity score during training
 #' @param Gamma paramter for ZSL
 #' @param Lambda parameter for ZSL
-#' @param Xpeaks TRUE if data type of x (and Expr) is ATAC-seq
-#' @param Sep delimiter for peak_location\cr
+#' @param Sep delimiter for peak_location
 #' ex: chr1_3084739_3085712 (make sure delimiter for peak_location of data must be "_") 
+#' @param Sdatatype type of side-information 
+#' \itemize{
+#' \item w2v (cell ontology)
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
 #' @param Mincellcount minimum cell count for a given cell type for training
 #' @param Mincellfrac minimum fraction of cell type for training
 #' @param Simthres initial similarity threshold
+#' @param norm normalization method for word2vector
+#' \itemize{
+#' \item "mean"
+#' \item "median"
+#' \item "max"
+#' \item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+#' \item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+#' }
 #' @param R_output TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object
 #'
 #' @return an attribute for ZSL (trained data) (julia object)
 #'
 #' @examples
+#' 1) Side information: Cell Ontology
 #' d <- make_input(matrix, train = TRUE)
 #' w2v <- make_w2v("Pubmed_index")
 #' annot <- make_cellontology("cell ontology file")
 #' stopwords <- make_stopwords(stopwords)
-#' att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, annot, "cell_ontology", w2v_index = TRUE)
+#' w2v_side <- make_w2v_sideinfo(w2v, annot, stopwords)
+#' att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, w2v_side)
 #'
+#' 2) Side information: scRNA-seq (or scATAC-seq, etc...)
+#' d <- make_input(matrix1, train = TRUE)
+#' sideinfo <- make_input(matrix2, train = TRUE)
+#' att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, sideinfo$norm_matrix, w2v_index = FALSE, snames = sideinfo$rowname, stypenames = sideinfo$cellname, sdatatype = "scRNA-seq")
+#' 
 #' @export
-create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology, Sdatatype, w2v_index = FALSE, Xdatatype = "scRNA-seq", Ngene = 64, Stopwords = stopwords, Fdrthr = 0.1, Gamma = 1.0, Lambda = 1.0, Xpeaks = FALSE, Sep = "_", Mincellcount = 10, Mincellfrac = 0.01, Simthres = -Inf, R_output = FALSE){
+create_attribute <- function(Name, Tissue, Expr, Rowname, Cellname, side_info, w2v_index = TRUE, snames = c(), stypenames = c(), sdim = 200, Xdatatype = "scRNA-seq", Ngene = 64, Fdrthr = 0.1, Gamma = 1.0, Lambda = 1.0, Sep = "_", Sdatatype = "w2v", Mincellcount = 10, Mincellfrac = 0.0, Simthres = -Inf, norm = "mean", R_output = FALSE){
 	name <- JuliaObject(Name)
 	tissue <- JuliaObject(Tissue)
-	#w2v
 	expr <- JuliaObject(Expr)
 	rowname <- JuliaObject(Rowname)
 	cellname <- JuliaObject(Cellname)
-	#cell_ontology
+
+	if (w2v_index) {
+		side_matrix <- field(side_info , "s")
+		snames <- field(side_info, "snames")
+		stypenames <- field(side_info, "stypenames")
+	}
+	else {
+		side_matrix <- side_info
+	}
+
+	side_matrix <- JuliaObject(side_matrix)
+	snames <- JuliaObject(snames)
+	stypenames <- JuliaObject(stypenames)
+	sdim <- julia_call("Int64", sdim, need_return = "Julia")
+
 	sdatatype <- JuliaObject(Sdatatype)
-	w2v_index <- JuliaObject(w2v_index)
 	xdatatype <- JuliaObject(Xdatatype)
 	ngene <- julia_call("Int64", Ngene, need_return = "Julia")
-	#stopwords
 	fdrthr <- julia_call("Float64", Fdrthr, need_return = "Julia")
 	gamma <- julia_call("Float64", Gamma, need_return = "Julia")
 	lambda <- julia_call("Float64", Lambda, need_return = "Julia")
-	xpeaks <- JuliaObject(Xpeaks)
 	sep <- JuliaObject(Sep)
 	simthres <- JuliaObject(Simthres)
 	mincellcount <- julia_call("Int64", Mincellcount, need_return = "Julia")
 	mincellfrac <- julia_call("Float64", Mincellfrac, need_return = "Julia")
+	norm <- JuliaObject(norm)	
 
 	cat("\nMaking model 'V' matrix by training data\n")
 	if (R_output){
-		Index_res <- julia_call("create_attribute", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, xdatatype, ngene, Stopwords, fdrthr, gamma, lambda, xpeaks, sep, mincellfrac, mincellcount, simthres,  need_return = "R") 
+		Index_res <- julia_call("create_attribute", name, tissue, expr, rowname, cellname, xdatatype, ngene, fdrthr, gamma, lambda, sep, sdatatype, side_matrix, stypenames, snames, sdim, mincellfrac, mincellcount, simthres, norm, need_return = "R") 
 	}	
 	else {
-		Index_res <- julia_call("create_attribute", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, xdatatype, ngene, Stopwords, fdrthr, gamma, lambda, xpeaks, sep, mincellfrac, mincellcount, simthres, need_return = "Julia")
+		Index_res <- julia_call("create_attribute", name, tissue, expr, rowname, cellname, xdatatype, ngene, fdrthr, gamma, lambda, sep, sdatatype, side_matrix, stypenames, snames, sdim, mincellfrac, mincellcount, simthres, norm, need_return = "Julia")
 	}
 	return (Index_res)
 }
@@ -623,20 +664,28 @@ create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_on
 #' \itemize{
 #' \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
 #' }
-#' @param w2v word2vector object
-#' \itemize{
-#' \item output of make_w2v
-#' \item pre-existing side-information object (julia object) (ex: julia_obj$side_information)
-#' \item output of generate_sideinformation
-#'}
 #' @param Expr expression/peak matrix (d <- make_input(input_var), d$norm_matrix)
 #' @param Rowname gene/peak_location of Expr (d<- make_input(input_var), d$rowname)
 #' @param Cellname cellname of Expr (d<- make_input(input_var), d$cellname)
-#' @param cell_ontology julia object of cell ontology (the result of make_cellontology)
-#' @param Sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param side_info matrix or w2v object depends on w2v_index
+#' \itemize{
+#' \item (gene or peak) matrix of side information (if w2v_index = FALSE)
+#' \item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+#' }
 #' @param w2v_index TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists
-#' @param Xdatatype type of Expr (scRNA-seq or scATAC-seq)
-#' @param Stopwords julia object of stopwords (the result of make_stopwords)
+#' @param snames gene/peak_location of matrix for side information (if w2v_index = FALSE)
+#' @param stypenames cellname of matrix for side information (if w2v_index = FALSE)
+#' @param Xdatatype type of Expr
+#' \itemize{
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
+#' @param sdatatype type of side-information
+#' \itemize{
+#' \item w2v (cell ontology)
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
 #' @param R_output TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object
 #' @param celltype_cnt_thr if the number for cell type exceeds, warning message will be sent and return FALSE. To ignore it, change the parameter into FALSE
 #' @param Mincellcount minimum cell count for a given cell type (works when side_limit: TRUE)
@@ -645,14 +694,20 @@ create_attribute <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_on
 #' @return an attribute for ZSL (trained data) (julia object)
 #'
 #' @examples
+#' 1) Side information: Cell Ontology
 #' d <- make_input(matrix, train = TRUE)
 #' w2v <- make_w2v("Pubmed_index")
 #' annot <- make_cellontology("cell ontology file")
 #' stopwords <- make_stopwords(stopwords)
-#' signature <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, annot, "cell_ontology", w2v_index = TRUE)
+#' w2v_side <- make_w2v_sideinfo(w2v, annot, stopwords)
+#' query_sig <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, w2v_side)
 #'
-#' @export
-create_signature <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,Sdatatype, w2v_index = FALSE, Stopwords = stopwords, Xdatatype = "scRNA-seq",  R_output = FALSE, celltype_cnt_thr = TRUE, mincellfrac = 0.01, mincellcount = 10, side_limit = FALSE){
+#' 2) Side information: scRNA-seq (or scATAC-seq, etc...)
+#' d <- make_input(matrix1, train = TRUE)
+#' sideinfo <- make_input(matrix2, train = TRUE)
+#' query_sig <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, sideinfo$norm_matrix, w2v_index = FALSE, snames = sideinfo$rowname, stypenames = sideinfo$cellname, sdatatype = "scRNA-seq")
+#'
+create_signature <- function(Name, Tissue, Expr, Rowname, Cellname, side_info, w2v_index = TRUE, snames = c(), stypenames = c(), Xdatatype = "scRNA-seq",  sdatatype = "w2v", R_output = FALSE, celltype_cnt_thr = TRUE, mincellfrac = 0.0, mincellcount = 10, side_limit = FALSE){
 	celltype_cnt = length(unique(Cellname))
 	if (celltype_cnt_thr) {
 		if (celltype_cnt > 1000){
@@ -662,25 +717,35 @@ create_signature <- function(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_on
 	}
 	name <- JuliaObject(Name)
 	tissue <- JuliaObject(Tissue)
-	#w2v
 	expr <- JuliaObject(Expr)
 	rowname <- JuliaObject(Rowname)
 	cellname <- JuliaObject(Cellname)
-	#cell_ontology
-	sdatatype <- JuliaObject(Sdatatype)
-	#stopwords
+
+	if (w2v_index) {
+		side_matrix <- field(side_info, "s")
+		snames <- field(side_info, "snames")
+		stypenames <- field(side_info, "stypenames")
+	}
+	else {
+		side_matrix <- side_info
+	}
+	
+	side_matrix <- JuliaObject(side_matrix)
+	snames <- JuliaObject(snames)
+	stypenames <- JuliaObject(stypenames)
+
+	sdatatype <- JuliaObject(sdatatype)
 	xdatatype <- JuliaObject(Xdatatype)
-	w2v_index <- JuliaObject(w2v_index)
 	mincellcount <- julia_call("Int64", mincellcount, need_return = "Julia")
 	mincellfrac <- julia_call("Float64", mincellfrac, need_return = "Julia")
 	side_limit <- JuliaObject(side_limit)
 
 	cat("\nMaking signature format of query (or test set) for prediction\n")
 	if (R_output){
-		Map_res <- julia_call("create_signature", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, Stopwords, xdatatype, mincellcount, mincellfrac, side_limit, need_return = "R")
+		Map_res <- julia_call("create_signature", name, tissue, expr, rowname, cellname, xdatatype, sdatatype, side_matrix, stypenames, snames, mincellfrac, mincellcount, side_limit, need_return = "R")
 	}
 	else {
-		Map_res <- julia_call("create_signature", name, tissue, w2v, w2v_index, expr, rowname, cellname, cell_ontology, sdatatype, Stopwords, xdatatype, mincellcount, mincellfrac, side_limit, need_return = "Julia")
+		Map_res <- julia_call("create_signature", name, tissue, expr, rowname, cellname, xdatatype, sdatatype, side_matrix, stypenames, snames, mincellfrac, mincellcount, side_limit, need_return = "Julia")
 	}
 	return (Map_res)
 }
@@ -811,16 +876,17 @@ predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, R_ou
 	cat("\nPredicting celltype by model from ZSL in consensus manner with various tissue\n")
 	if (R_output){
 		confusion_list <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, need_return = "R")
-		confusion <- confusion_list[1]
+
+
+		confusion <- confusion_list[[1]]
 
 		#modify all_confusion
-		all_confusion <- as.matrix(confusion_list[2])
+		all_confusion <- as.matrix(confusion_list[[2]])
 		total_cell_name <- field(query, "celltypes")
-		sname <- field(query, "snames")
+		stypename <- field(query, "stypenames")
 		rownames(all_confusion) <- total_cell_name
-		colnames(all_confusion) <- sname
+		colnames(all_confusion) <- stypename
 		all_confusion <- decorate_all_confusion(all_confusion)
-
 		#modify confusion
 		y <- table(field(query, "celltypes"))
 		tmp <- JuliaObject(field(query, "celltypes"))
@@ -830,7 +896,7 @@ predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, R_ou
 		new_index <- r2julia_sort(y_cell_list, julia_cell_list)
 		y <- y[new_index]
 		cellnames <- y_cell_list[new_index]
-		confusion <- decorate_confusion(confusion, y, cellnames, sname)
+		confusion <- decorate_confusion(confusion, y, cellnames, stypename)
 
 
 		confusion_list <- list(confusion, all_confusion)
@@ -897,7 +963,7 @@ decorate_all_confusion <- function(all_confusion){
 			tmp_conf[i,1] <- "unassign"
 		}
 		else {
-			tmp_conf[i,1] <- names(which(all_confusion[i,] == 1))
+			tmp_conf[i,1] <- names(which.max(all_confusion[i,]))
 		}
 	}
 	return (tmp_conf)
@@ -911,7 +977,7 @@ decorate_all_confusion <- function(all_confusion){
 #' @param y table of count for each cell type (query)\cr
 #' - y <- table(field(query_signature, "celltypes"))
 #' @param cellnames cell type of query data
-#' @param sname cell type of side-information
+#' @param stypename cell type of side-information
 #'
 #' @return a confusion matrix that has unassign count
 #'
@@ -919,7 +985,7 @@ decorate_all_confusion <- function(all_confusion){
 #' NA
 #'
 #' @export
-decorate_confusion <- function(confusion, y, cellnames, sname){
+decorate_confusion <- function(confusion, y, cellnames, stypename){
 	confusion <- as.matrix(confusion)
 	assign_sum <- apply(confusion, 1, sum)
 	unassign <- y - assign_sum
@@ -927,7 +993,7 @@ decorate_confusion <- function(confusion, y, cellnames, sname){
 	unassign <- data.frame(unassign)
 	rownames(unassign ) <- cellnames
 	colnames(unassign) <- "unassign"
-	colnames(confusion) <- sname
+	colnames(confusion) <- stypename
 	confusion <- cbind(unassign, confusion)
 	return (confusion)
 }
@@ -973,6 +1039,8 @@ validation <- function(conf, opt = FALSE){
 		conf <-  confusion_ratio(conf)
 	}
 	unassign = conf[,1]
+
+
 	for (i in c(1:dim(conf)[1])){
 		tp_index <- which(colnames(conf)==rownames(conf)[i])
 		tp <- c(tp, conf[i,tp_index])
@@ -1000,12 +1068,13 @@ validation <- function(conf, opt = FALSE){
 #' @param iscell attribute set
 #' @param mscell signature set
 #' @param gn_overlap_thr minimum gene overlap ratio of attribute in attribute set between query data 
+#' @param sep delimiter for peak_location
 #' @param ncore number of cores for multi-threading 
 #'
-#' @return return list composed of (model_list, sname, zsl_tissue, meta_column_name)
+#' @return return list composed of (model_list, stypename, zsl_tissue, meta_column_name)
 #' \itemize{
 #' \item model_list: logistic regression model (composed of predicting cell and corresponding coefficients)
-#' \item sname: cell types that are used in each coefficient (T cell, B cell, fibroblast ....)
+#' \item stypename: cell types that are used in each coefficient (T cell, B cell, fibroblast ....)
 #' \item zsl_tissue: tissue types that are used in logistic regression (Lung, Heart ...)
 #' \item meta_column_name: pseudo name of variables in logistic regression (Heart_cell1, Heart_cell2...)
 #' }
@@ -1014,23 +1083,25 @@ validation <- function(conf, opt = FALSE){
 #' meta_model <- create_meta_index_av(att_set, sig_set)
 #'
 #' @export
-create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1){
+create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, sep = "_", ncore = 1){
 	cat("\nCreating logistic regression model")
 	cat("\nGenerating ZSL results for stacking from each tissue\n")
 
+
+	sep <- JuliaObject(sep)
 	registerDoParallel(ncore)
 	start_time <- Sys.time()
 
 	gn_overlap_thr <- JuliaObject(gn_overlap_thr)
 
 	zsl_tissue <- c()
-	sname <- field(mscell[1], "snames")
+	stypename <- field(mscell[1], "stypenames")
 	first = TRUE
 	for (q_index in 1:length(mscell)){
 		query = mscell[q_index]
 		comment <- paste("\nTraining set: ", as.character(q_index), "/", as.character(length(mscell)), sep = "")
 		cat(comment)
-		meta_info <- julia_call("create_meta_index", iscell, query, gn_overlap_thr, need_return = "R")
+		meta_info <- julia_call("create_meta_index", iscell, query, sep, gn_overlap_thr, need_return = "R")
 		meta_table_tmp <- data.frame(meta_info[[1]])
 		if (first){
 		#	first = FALSE (after meta_table)
@@ -1042,7 +1113,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 				}
 				zsl_tissue <- c(zsl_tissue, tissue)
 				#zsl_tissue: tissue list used in ZSL prediction (=tissue of attribute sets)
-				for (cell_index in 1:length(sname)){
+				for (cell_index in 1:length(stypename)){
 					cellname <- paste("cell", as.character(cell_index), sep = "")
 					tissue_cell <- paste(tissue, cellname, sep = "_")
 					meta_column_name <- c(meta_column_name, tissue_cell)
@@ -1070,7 +1141,6 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 		for (w in 1:length(train_tissue_overlap_index)){
 			temp_index <- train_tissue_overlap_index[[w]]
 			temp_first = TRUE
-			
 			for (i in temp_index){
 				pre_tmp_table <- meta_table_tmp[,(1+(i-1)*block_size):(i*block_size)]
 				pre_tmp_table <- t(pre_tmp_table)
@@ -1083,7 +1153,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 
 			}
 			tmp_table <- tmp_table / length(temp_index)
-			if (i == 1){
+			if (w == 1){
 				meta_table <- tmp_table
 				next
 			}
@@ -1092,6 +1162,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 		}
 
 		meta_table <- data.frame(meta_table)
+
 		cells <- field(query, "celltypes")
 		if (first){
 			first = FALSE
@@ -1129,8 +1200,8 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 	proc_time <- end_time - start_time
 	print(proc_time)	
 	registerDoParallel(1)
-	res_list <- list(model_list, sname, zsl_tissue, meta_column_name)
-	names(res_list) <- c("model_list", "sname", "zsl_tissue", "meta_column_name")
+	res_list <- list(model_list, stypename, zsl_tissue, meta_column_name)
+	names(res_list) <- c("model_list", "stypename", "zsl_tissue", "meta_column_name")
 	return (res_list)
 
 }	
@@ -1144,6 +1215,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 #' @param iscell attribute set
 #' @param meta_model_list result from create_meta_index
 #' @param query signature object of query
+#' @param sep delimiter for peak_location
 #' @param gn_overlap_thr minimum gene overlap ratio of attribute in attribute set between query data 
 #' @param logistic_thr threshold for each cell whether predicted score from logistic regression model is confident
 #' @param tissue_opt TRUE if user wants to find tissue-origin 
@@ -1161,11 +1233,11 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1
 #' res_list$confusion or res_list$all_confusion
 #'
 #' @export
-logistic_prediction_cell <- function(iscell, meta_model_list, query, gn_overlap_thr = 0.5, logistic_thr = 0.5, tissue_opt = FALSE, celltype_specific = FALSE){
+logistic_prediction_cell <- function(iscell, meta_model_list, query, sep = "_", gn_overlap_thr = 0.5, logistic_thr = 0.5, tissue_opt = FALSE, celltype_specific = FALSE){
 	cat("\nPredicting celltype by logistic regression model\n")
 	meta_cellname <- as.character(meta_model_list[[2]])
 	gn_overlap_thr <- JuliaObject(gn_overlap_thr)
-	predict_info <- julia_call("create_meta_index", iscell, query, gn_overlap_thr, need_return = "R")
+	predict_info <- julia_call("create_meta_index", iscell, query, sep, gn_overlap_thr, need_return = "R")
 	
 	query_model_cellname <- as.character(predict_info[[3]])
 	query_model_tissue <- as.character(predict_info[[2]])
@@ -1223,7 +1295,7 @@ logistic_prediction_cell <- function(iscell, meta_model_list, query, gn_overlap_
 			}
 		}
 			tmp_table <- tmp_table / length(temp_index)
-		 if (i == 1){
+		 if (w == 1){
 			 query_table <- tmp_table
 			 next
 		}
@@ -1282,7 +1354,7 @@ logistic_prediction_cell <- function(iscell, meta_model_list, query, gn_overlap_
 
 	##build confusion matrix
 	if (tissue_opt){
-		cat("\nTissue option will take long time\n")
+		cat("\nTissue option will take a long time\n")
 		coef_model <- list()
 		
 		for (j in 1:length(model_list)){

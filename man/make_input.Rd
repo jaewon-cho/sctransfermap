@@ -4,8 +4,15 @@
 \alias{make_input}
 \title{make_input}
 \usage{
-make_input(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1,
-  train = FALSE, gene_usage = FALSE, norm = "log")
+make_input(
+  input_var,
+  min_thr = 0.1,
+  max_thr = 0.9,
+  pseudo_cnt = 1,
+  train = FALSE,
+  gene_usage = FALSE,
+  norm = "log"
+)
 }
 \arguments{
 \item{input_var}{matrix class composed of gene/peak_location(row)-by-cell(column)\cr
@@ -31,11 +38,11 @@ make_input(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1,
 
 \item{norm}{normalization options for matrix
 \itemize{
-\item "log": log-normalization (with pseudo count)
-\item "raw": just uses count matrix
-\item "total": divide by total count of each cell, respectively
-\item "z": z-normalization
-\item "total-log": "total" -> "log" normalization (with pseudo count)
+\item "log": log-normalization after gene filtering(with pseudo count)
+\item "raw": just uses count matrix after gene filtering
+\item "total": divide by total count of each cell, respectively (before gene filtering)
+\item "z": z-normalization after gene filtering
+\item "total_log": "total" -> "log" normalization before gene filtering (with pseudo count)
 }}
 }
 \value{

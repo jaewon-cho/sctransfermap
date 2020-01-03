@@ -4,25 +4,50 @@
 \alias{n_fold_logistic}
 \title{n_fold_logistic}
 \usage{
-n_fold_logistic(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name,
-  sdatatype, fdrthr = 0.1, n = 5, k = 1, tissue_opt = FALSE,
-  Celltype_specific = FALSE, ncore = 1, side_limit = FALSE,
-  norm = "log")
+n_fold_logistic(
+  tm_facs,
+  Gene_usage,
+  data_name,
+  side_info,
+  w2v_index = TRUE,
+  sdatatype = "w2v",
+  mincellcount = 10,
+  Ngene = 64,
+  fdrthr = 0.1,
+  simthres = -Inf,
+  n = 5,
+  k = 1,
+  tissue_opt = FALSE,
+  Celltype_specific = FALSE,
+  ncore = 1,
+  side_limit = FALSE,
+  norm = "log",
+  side_norm = "mean"
+)
 }
 \arguments{
 \item{tm_facs}{list variable of importdata (same as import_tm_facs or import_sparse or list of importdata)}
 
-\item{s}{side-infomration (julia object)}
+\item{data_name}{name for the data}
 
-\item{annot}{cell_ontology (julia object)}
+\item{side_info}{matrix or w2v object depends on w2v_index
+\itemize{
+\item (gene or peak) matrix of side information (if w2v_index = FALSE)
+\item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+}}
 
-\item{mincell}{TRUE if user wants to give minimum cell type thresholding}
+\item{w2v_index}{TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists}
+
+\item{sdatatype}{type of side-information
+\itemize{
+\item w2v (cell ontology)
+\item scRNA-seq
+\item scATAC-seq
+}}
+
+\item{mincellcount}{minimum cell count for a given cell type for training}
 
 \item{Ngene}{a number of vector size after JL transformation}
-
-\item{data_name}{name for the attribute}
-
-\item{sdatatype}{type of side-information (cell_ontology, ATAC-seq, or user-defined term)}
 
 \item{fdrthr}{fdr threshold for calculating similarity score during training}
 
@@ -47,6 +72,15 @@ n_fold_logistic(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name,
 \item "total-log": "total" -> "log" normalization (with pseudo count)
 }}
 
+\item{side_norm}{normalization method for word2vector
+\itemize{
+\item "mean"
+\item "median"
+\item "max"
+\item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+\item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+}}
+
 \item{gene_usage}{option for gene/peak_location filtering to make hadamard matrix}
 }
 \value{
@@ -62,11 +96,16 @@ att_set, meta_set, logistic_result
 N-fold validation for logistic regression model. Uses training data for ZSL and logistic regression modeling independently (determined by "k").
 }
 \examples{
+1) Side information: Cell Ontology
 tm_facs <- input_tm_facs("address")
 w2v <- make_w2v("Pubmed.index")
 cell_ontology <- make_cellontology("cell_ontogloy_file")
 stopword <- make_stopwords(stopwords)
 side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-res <- n_fold_logistic(tm_facs, 2048, side_info, cell_ontology, FALSE, 64, "user", "cell_ontology")
+res <- n_fold_logistic(tm_facs, 2048, "user", side_info)
+
+2) Side information: scRNA-seq (or scATAC-seq, etc ...)
+sideinfo <- make_input(matrix, train = TRUE)
+res <- n_fold_logistic(tm_facs, 2048, "user", side_info, w2v_index = FALSE, sdatatype = "scRNA-seq")
 
 }

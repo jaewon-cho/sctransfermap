@@ -4,13 +4,24 @@
 \alias{quick_prediction}
 \title{quick_prediction}
 \usage{
-quick_prediction(input_var, name, opt = "consensus")
+quick_prediction(input_var, name, tissue, xdatatype, opt = "consensus")
 }
 \arguments{
 \item{input_var}{matrix class composed of gene/peak_location(row)-by-cell(column)\cr
 - same as result of importdata or convert_seurat}
 
 \item{name}{any name that user wants for the result}
+
+\item{tissue}{tissue of the sample (please make sure the word of tissue must be same as pre-existing tissue list. If it is a new tissue type, it doesn't matter)
+\itemize{
+\item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
+}}
+
+\item{xdatatype}{type of Expr
+\itemize{
+\item scRNA-seq
+\item scATAC-seq
+}}
 
 \item{opt}{prediction mode whether "consensus" or "logistic"}
 }
@@ -23,12 +34,12 @@ return 2 confusion matrix
 }
 \description{
 user-friendly quick prediction for single-cell data
-side-information is cell ontology
+side-information is cell ontology (w2v)
 }
 \examples{
-result <- quick_prediction(matrix, "single-cell")
+result <- quick_prediction(matrix, "single-cell", "Heart", "scRNA-seq")
 - prediction by consensus results of ZSL
-result <- quick_prediction(matirx, "single-cell", opt = "logistic")
+result <- quick_prediction(matirx, "single-cell", "Heart", "scRNA-seq", opt = "logistic")
 - prediction by logistic regression
 
 }

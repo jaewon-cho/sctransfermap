@@ -4,10 +4,24 @@
 \alias{create_signature}
 \title{create_signature}
 \usage{
-create_signature(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
-  Sdatatype, w2v_index = FALSE, Stopwords = stopwords,
-  Xdatatype = "scRNA-seq", R_output = FALSE, celltype_cnt_thr = TRUE,
-  mincellfrac = 0.01, mincellcount = 10, side_limit = FALSE)
+create_signature(
+  Name,
+  Tissue,
+  Expr,
+  Rowname,
+  Cellname,
+  side_info,
+  w2v_index = TRUE,
+  snames = c(),
+  stypenames = c(),
+  Xdatatype = "scRNA-seq",
+  sdatatype = "w2v",
+  R_output = FALSE,
+  celltype_cnt_thr = TRUE,
+  mincellfrac = 0,
+  mincellcount = 10,
+  side_limit = FALSE
+)
 }
 \arguments{
 \item{Name}{user-defined name for the output}
@@ -17,28 +31,36 @@ create_signature(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
 \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
 }}
 
-\item{w2v}{word2vector object
-\itemize{
-\item output of make_w2v
-\item pre-existing side-information object (julia object) (ex: julia_obj$side_information)
-\item output of generate_sideinformation
-}}
-
 \item{Expr}{expression/peak matrix (d <- make_input(input_var), d$norm_matrix)}
 
 \item{Rowname}{gene/peak_location of Expr (d<- make_input(input_var), d$rowname)}
 
 \item{Cellname}{cellname of Expr (d<- make_input(input_var), d$cellname)}
 
-\item{cell_ontology}{julia object of cell ontology (the result of make_cellontology)}
-
-\item{Sdatatype}{type of side-information (cell_ontology, ATAC-seq, or user-defined term)}
+\item{side_info}{matrix or w2v object depends on w2v_index
+\itemize{
+\item (gene or peak) matrix of side information (if w2v_index = FALSE)
+\item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+}}
 
 \item{w2v_index}{TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists}
 
-\item{Stopwords}{julia object of stopwords (the result of make_stopwords)}
+\item{snames}{gene/peak_location of matrix for side information (if w2v_index = FALSE)}
 
-\item{Xdatatype}{type of Expr (scRNA-seq or scATAC-seq)}
+\item{stypenames}{cellname of matrix for side information (if w2v_index = FALSE)}
+
+\item{Xdatatype}{type of Expr
+\itemize{
+\item scRNA-seq
+\item scATAC-seq
+}}
+
+\item{sdatatype}{type of side-information
+\itemize{
+\item w2v (cell ontology)
+\item scRNA-seq
+\item scATAC-seq
+}}
 
 \item{R_output}{TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object}
 
@@ -57,10 +79,17 @@ an attribute for ZSL (trained data) (julia object)
 make signature object for ZSL (input for prediction)
 }
 \examples{
+1) Side information: Cell Ontology
 d <- make_input(matrix, train = TRUE)
 w2v <- make_w2v("Pubmed_index")
 annot <- make_cellontology("cell ontology file")
 stopwords <- make_stopwords(stopwords)
-signature <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, annot, "cell_ontology", w2v_index = TRUE)
+w2v_side <- make_w2v_sideinfo(w2v, annot, stopwords)
+query_sig <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, w2v_side)
+
+2) Side information: scRNA-seq (or scATAC-seq, etc...)
+d <- make_input(matrix1, train = TRUE)
+sideinfo <- make_input(matrix2, train = TRUE)
+query_sig <- create_signature("user", "Heart", d$norm_matirx, d$rowname, d$cellname, sideinfo$norm_matrix, w2v_index = FALSE, snames = sideinfo$rowname, stypenames = sideinfo$cellname, sdatatype = "scRNA-seq")
 
 }

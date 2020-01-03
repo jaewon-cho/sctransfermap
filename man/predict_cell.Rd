@@ -4,8 +4,13 @@
 \alias{predict_cell}
 \title{predict_cell}
 \usage{
-predict_cell(iscell, query, simthr = Inf, gn_overlap_thr = 0.5,
-  R_output = TRUE)
+predict_cell(
+  iscell,
+  query,
+  simthr = Inf,
+  gn_overlap_thr = 0.5,
+  R_output = TRUE
+)
 }
 \arguments{
 \item{iscell}{attribute set}

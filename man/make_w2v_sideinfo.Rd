@@ -4,8 +4,13 @@
 \alias{make_w2v_sideinfo}
 \title{make_w2v_sideinfo}
 \usage{
-make_w2v_sideinfo(w2v_obj, cell_ontology_obj, stopword, opt = TRUE,
-  R_output = FALSE)
+make_w2v_sideinfo(
+  w2v_obj,
+  cell_ontology_obj,
+  stopword,
+  norm = "mean",
+  R_output = FALSE
+)
 }
 \arguments{
 \item{w2v_obj}{the result of make_w2v}
@@ -14,10 +19,24 @@ make_w2v_sideinfo(w2v_obj, cell_ontology_obj, stopword, opt = TRUE,
 
 \item{stopword}{the result of make_stopwords}
 
-\item{opt}{TRUE if mean value for word2vector, FALSE if max value for word2vector}
+\item{norm}{normalization method for word2vector
+\itemize{
+\item "mean"
+\item "median"
+\item "max"
+\item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+\item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+}}
 }
 \value{
 side information of cell_ontology in julia object
+\itemize{
+\item field(side_info, "sdatatype"): "w2v"
+\item field(side_info, "s"): score matrix
+\item field(side_info, "stypenames"): cell types of w2v
+\item field(side_info, "snames"): ["NA"]
+\item field(side_info, "fjlts"): identity matrix
+}
 }
 \description{
 generating a side information of word2vec

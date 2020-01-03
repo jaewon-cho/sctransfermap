@@ -132,7 +132,7 @@ sparse_tm_facs <- function(tm_facs){
 #' \item "raw": just uses count matrix
 #' \item "total": divide by total count of each cell, respectively
 #' \item "z": z-normalization
-#' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' \item "total_log": "total" -> "log" normalization (with pseudo count)
 #' }
 #'
 #' @return list of "make_input" results from each tissue (or sample)
@@ -196,23 +196,38 @@ tissue_merge <- function(tissue){
 #' creating signature set from result of make_input_tm_facs
 #'
 #' @param tm_facs_input result of make_input_tm_facs
-#' @param s side-infomration (julia object)
-#' @param annot cell_ontology (julia object)
 #' @param data_name name for the signature
-#' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param side_info matrix or w2v object depends on w2v_index
+#' \itemize{
+#' \item (gene or peak) matrix of side information (if w2v_index = FALSE)
+#' \item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+#' }
+#' @param w2v_index TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists
+#' @param sdatatype type of side-information
+#' \itemize{
+#' \item w2v (cell ontology)
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
 #' @param side_limit TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)
 #' @return signature set
 #'
 #' @examples
+#' 1) Side information: Cell Ontology
 #' tm_facs_input <- make_input_tm_facs(tm_facs)
 #' w2v <- make_w2v("Pubmed.index")
 #' cell_ontology <- make_cellontology("cell_ontogloy_file")
 #' stopword <- make_stopwords(stopwords)
-#' side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-#' sig_set <- make_tm_facs_signature_set(tm_facs_input, side_info, cell_ontology, "user", "cell_ontology")
+#' w2v_side <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
+#' sig_set <- make_tm_facs_signature_set(tm_facs_input, "tabula_muris", w2v_side)
+#'
+#' 2) Side information: scRNA-seq (or scATAC-seq, etc...)
+#' tm_facs_input <- make_input_tm_facs(tm_facs)
+#' sideinfo <- make_input(matrix, train = TRUE)
+#' sig_set <- make_tm_facs_signature_set(tm_facs_input, "tabula_muris", sideinfo, w2v_index = FALSE, sdatatype = "scRNA-seq")
 #'
 #' @export
-make_tm_facs_signature_set <- function(tm_facs_input, s, annot, data_name, sdatatype, side_limit = FALSE){
+make_tm_facs_signature_set <- function(tm_facs_input, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", side_limit = FALSE){
 	start_time <- Sys.time()
 	head = TRUE
 	for(i in 1:length(tm_facs_input)){
@@ -220,8 +235,12 @@ make_tm_facs_signature_set <- function(tm_facs_input, s, annot, data_name, sdata
 		print(tissue_name)
 		tissue_name <- tissue_merge(tissue_name)		
 		d <- tm_facs_input[[i]]
-		d_sig <- create_signature(data_name, tissue_name, s, d[[1]], d[[2]], d[[3]], annot, sdatatype, Stopwords = JuliaObject(""), side_limit = side_limit)
-
+		if (w2v_index) {
+			d_sig <- create_signature(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info, side_limit = side_limit)
+		}
+		else {
+			d_sig <- create_signature(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info$norm_matrix, w2v_index = w2v_index, snames = side_info$rowname, stypenames = side_info$cellname, sdatatype = sdatatype, side_limit = side_limit)
+		}
 		if (head){
 			tm_facs_signature_set <- make_signature_set(d_sig)
 			head = FALSE
@@ -241,28 +260,52 @@ make_tm_facs_signature_set <- function(tm_facs_input, s, annot, data_name, sdata
 #' creating attribute set from the result of make_input_tm_facs
 #'
 #' @param tm_facs_input the result of make_input_tm_facs
-#' @param s side-information (jula object)
-#' @param annot cell ontology (julia object)
-#' @param mincell TRUE if user wants to give minimum cell type thresholding
 #' @param data_name name for the attribute
-#' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
+#' @param side_info matrix or w2v object depends on w2v_index
+#' \itemize{
+#' \item (gene or peak) matrix of side information (if w2v_index = FALSE)
+#' \item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+#' }
+#' @param w2v_index TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists
+#' @param Sdatatype type of side-information
+#' \itemize{
+#' \item w2v (cell ontology)
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
+#' @param mincellcount minimum cell count for a given cell type for training
 #' @param ngene a number of vector size after JL transformation
 #' @param fdrthr fdr threshold for calculating similarity score during training
 #' @param gamma paramter for ZSL
 #' @param lambda parameter for ZSL
+#' @param simthres initial similarity threshold
+#' @param norm normalization method for word2vector
+#' \itemize{
+#' \item "mean"
+#' \item "median"
+#' \item "max"
+#' \item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+#' \item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+#' }
 #'
 #' @return attribute set
 #'
 #' @examples
+#' 1) Side information: Cell Ontology
 #' tm_facs_input <- make_input_tm_facs(tm_facs)
 #' w2v <- make_w2v("Pubmed.index")
-#' cell_ontology <- make_cellontology("cell_ontogloy_file")
+#' annot <- make_cellontology("cell_ontogloy_file")
 #' stopword <- make_stopwords(stopwords)
-#' side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-#' sig_set <- make_tm_facs_attribute_set(tm_facs_input, side_info, cell_ontology, FALSE, "user", "cell_ontology")
+#' w2v_side <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
+#' att_set <- make_tm_facs_attribute_set(tm_facs_input, "tabula_muris", w2v_side)
+#'
+#' 2) Side information: scRNA-seq (or scATAC-seq, etc ...)
+#' tm_facs_input <- make_input_tm_facs(tm_facs)
+#' sideinfo <- make_input(matrix, train = TRUE)
+#' att_set <- make_tm_facs_attribute_set(tm_facs_input, "tabula_muris", sideinfo, w2v_index = FALSE, sdatatype = "scRNA-seq")
 #'
 #' @export
-make_tm_facs_attribute_set <- function(tm_facs_input, s, annot, mincell, data_name, sdatatype, ngene = 64, fdrthr = 0.1, lambda = 1, gamma = 1){
+make_tm_facs_attribute_set <- function(tm_facs_input, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 10, ngene = 64, fdrthr = 0.1, lambda = 1, gamma = 1, simthres = -Inf, norm = "mean"){
 	start_time <- Sys.time()
 	head = TRUE
 	for (i in 1:length(tm_facs_input)){
@@ -270,12 +313,12 @@ make_tm_facs_attribute_set <- function(tm_facs_input, s, annot, mincell, data_na
 		print(tissue_name)
 		tissue_name <- tissue_merge(tissue_name)
 		d <- tm_facs_input[[i]]
-		
-		if (mincell){
-			d_att <- create_attribute(data_name, tissue_name, s, d[[1]], d[[2]], d[[3]], annot, sdatatype, Stopwords = JuliaObject(""), Ngene = ngene, Fdrthr = fdrthr,Gamma = gamma, Lambda = lambda)		
+	
+		if (w2v_index){
+			d_att <- create_attribute(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info, Mincellcount = mincellcount, Ngene = ngene, Fdrthr = fdrthr, Gamma = gamma, Lambda = lambda, Simthres = simthres, norm = norm)
 		}
 		else {
-			d_att <- create_attribute(data_name, tissue_name, s, d[[1]], d[[2]], d[[3]], annot, sdatatype, Stopwords = JuliaObject(""), Mincellcount = 0, Mincellfrac = 0, Ngene = ngene, Fdrthr = fdrthr,Gamma = gamma, Lambda = lambda)	
+			d_att <- create_attribute(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info$norm_matrix, w2v_index, snames = side_info$rowname, stypenames = side_info$cellname, sdatatype = sdatatype, Mincellcount = mincellcount, Ngene = ngene, Fdrthr = fdrthr,Gamma = gamma, Lambda = lambda, Simthres = simthres, norm = norm)	
 		}
 		if (head){
 			tm_facs_att_set <- make_attribute_set(d_att)
@@ -331,12 +374,10 @@ leave_one_val <-function(att_set, sig_set){
 
 		tmp_ratio <- confusion_ratio(tmp_res)
 		tmp_val <- validation(tmp_res, opt = TRUE)		
-
 		res_list[[i]] <- tmp_res
 		ratio_list[[i]] <- tmp_ratio
 		val_list[[i]] <- tmp_val
 		tissue_list <- c(tissue_list, tmp_tissue)
-
 		tmp_val_sample <- validation_sample(tmp_res)
 		f1_score <- tmp_val_sample[[1]]
 		unassign <- tmp_val_sample[[2]]
@@ -475,13 +516,23 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 #'
 #' @param tm_facs list variable of importdata (same as import_tm_facs or import_sparse or list of importdata)
 #' @param gene_usage option for gene/peak_location filtering to make hadamard matrix
-#' @param s side-infomration (julia object)
-#' @param annot cell_ontology (julia object)
-#' @param mincell TRUE if user wants to give minimum cell type thresholding
+#' @param data_name name for the data
+#' @param side_info matrix or w2v object depends on w2v_index
+#' \itemize{
+#' \item (gene or peak) matrix of side information (if w2v_index = FALSE)
+#' \item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+#' }
+#' @param w2v_index TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists
+#' @param sdatatype type of side-information
+#' \itemize{
+#' \item w2v (cell ontology)
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
+#' @param mincellcount minimum cell count for a given cell type for training
 #' @param Ngene a number of vector size after JL transformation
-#' @param data_name name for the attribute
-#' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
 #' @param fdrthr fdr threshold for calculating similarity score during training
+#' @param simthres initial similarity threshold
 #' @param n the number for "N"-fold validation
 #' @param side_limit TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)
 #' @param norm normalization options for matrix
@@ -491,6 +542,14 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 #' \item "total": divide by total count of each cell, respectively
 #' \item "z": z-normalization
 #' \item "total-log": "total" -> "log" normalization (with pseudo count)
+#' }
+#' @param side_norm normalization method for word2vector
+#' \itemize{
+#' \item "mean"
+#' \item "median"
+#' \item "max"
+#' \item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+#' \item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
 #' }
 #'
 #' @return n-fold list composed of 6 results: conf_list, conf_ratio_list, val_list, tissue_list, f1_list, unassign_list
@@ -505,15 +564,21 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 #' }
 #'
 #' @examples
+#' 1) Side information: Cell Ontology
 #' tm_facs <- input_tm_facs("address")
 #' w2v <- make_w2v("Pubmed.index")
 #' cell_ontology <- make_cellontology("cell_ontogloy_file")
 #' stopword <- make_stopwords(stopwords)
 #' side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-#' res <- n_fold_zsl(tm_facs, 2048, side_info, cell_ontology, FALSE, 64, "user", "cell_ontology")
-#' 
+#' res <- n_fold_zsl(tm_facs, 2048, "user", side_info)
+#'
+#' 2) Side information: scRNA-seq (or scATAC-seq, etc ...)
+#' tm_facs <- input_tm_facs("address")
+#' sideinfo <- make_input(matrix, train = TRUE)
+#' res <- n_fold_zsl(tm_facs, 2048, "user", side_info, w2v_index = FALSE, sdatatype = "scRNA-seq")
+#'
 #' @export
-n_fold_zsl <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name, sdatatype, fdrthr = 0.1, n = 5, side_limit = FALSE, norm = "log"){
+n_fold_zsl <- function(tm_facs, Gene_usage, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 10, Ngene = 64, fdrthr = 0.1, simthres = -Inf, n = 5, side_limit = FALSE, norm = "log", side_norm = "mean"){
 	start_time <- Sys.time()	
 	n_fold_res <- list()
 	res_list <- list()
@@ -575,8 +640,8 @@ n_fold_zsl <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name,
 			zsl_list[[i]] <- zsl_input
 			names(zsl_list)[i] <- tissue_name
 		}
-		sig_set <- make_tm_facs_signature_set(val_list, s, annot, data_name, sdatatype, side_limit = side_limit)
-		att_set <- make_tm_facs_attribute_set(zsl_list, s, annot, mincell, data_name, sdatatype, ngene = Ngene, fdrthr = fdrthr)
+		sig_set <- make_tm_facs_signature_set(val_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, side_limit = side_limit)
+		att_set <- make_tm_facs_attribute_set(zsl_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, mincellcount, ngene = Ngene, fdrthr = fdrthr, simthres = simthres, norm = side_norm)
 	
 
 		for (i in 1:length(sig_set)){
@@ -621,12 +686,21 @@ n_fold_zsl <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name,
 #'
 #' @param tm_facs list variable of importdata (same as import_tm_facs or import_sparse or list of importdata)
 #' @param gene_usage option for gene/peak_location filtering to make hadamard matrix
-#' @param s side-infomration (julia object)
-#' @param annot cell_ontology (julia object)
-#' @param mincell TRUE if user wants to give minimum cell type thresholding
+#' @param data_name name for the data
+#' @param side_info matrix or w2v object depends on w2v_index
+#' \itemize{
+#' \item (gene or peak) matrix of side information (if w2v_index = FALSE)
+#' \item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+#' }
+#' @param w2v_index TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists
+#' @param sdatatype type of side-information
+#' \itemize{
+#' \item w2v (cell ontology)
+#' \item scRNA-seq
+#' \item scATAC-seq
+#' }
+#' @param mincellcount minimum cell count for a given cell type for training
 #' @param Ngene a number of vector size after JL transformation
-#' @param data_name name for the attribute
-#' @param sdatatype type of side-information (cell_ontology, ATAC-seq, or user-defined term)
 #' @param fdrthr fdr threshold for calculating similarity score during training
 #' @param n the number for "N"-fold validation
 #' @param k ratio between ZSL(1) and logistic regression modeling (k) (k=1 -> ZSL:glm = 1:1, k=2 -> ZSL:glm = 1:2)
@@ -642,6 +716,14 @@ n_fold_zsl <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name,
 #' \item "z": z-normalization
 #' \item "total-log": "total" -> "log" normalization (with pseudo count)
 #' }
+#' @param side_norm normalization method for word2vector
+#' \itemize{
+#' \item "mean"
+#' \item "median"
+#' \item "max"
+#' \item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+#' \item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+#' }
 #'
 #' @return att_set, meta_set, logistic_result
 #' \itemize{
@@ -652,15 +734,20 @@ n_fold_zsl <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name,
 #' }
 #'
 #' @examples
+#' 1) Side information: Cell Ontology
 #' tm_facs <- input_tm_facs("address")
 #' w2v <- make_w2v("Pubmed.index")
 #' cell_ontology <- make_cellontology("cell_ontogloy_file")
 #' stopword <- make_stopwords(stopwords)
 #' side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-#' res <- n_fold_logistic(tm_facs, 2048, side_info, cell_ontology, FALSE, 64, "user", "cell_ontology")
+#' res <- n_fold_logistic(tm_facs, 2048, "user", side_info)
+#'
+#' 2) Side information: scRNA-seq (or scATAC-seq, etc ...)
+#' sideinfo <- make_input(matrix, train = TRUE)
+#' res <- n_fold_logistic(tm_facs, 2048, "user", side_info, w2v_index = FALSE, sdatatype = "scRNA-seq")
 #' 
 #' @export
-n_fold_logistic <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_name, sdatatype, fdrthr = 0.1, n = 5, k = 1, tissue_opt = FALSE, Celltype_specific = FALSE, ncore = 1, side_limit = FALSE, norm = "log"){
+n_fold_logistic <- function(tm_facs, Gene_usage, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 10, Ngene = 64, fdrthr = 0.1, simthres = -Inf, n = 5, k = 1, tissue_opt = FALSE, Celltype_specific = FALSE, ncore = 1, side_limit = FALSE, norm = "log", side_norm = "mean"){
 	tm_att_result<- list()
 	tm_meta_result <- list()
 	tm_logistic_result <- list()
@@ -734,10 +821,10 @@ n_fold_logistic <- function(tm_facs, Gene_usage, s, annot, mincell, Ngene, data_
 								
 		}
 		cat("\n\nSignature for GLM\n")
-		tm_sig_glm_set <- make_tm_facs_signature_set(glm_list, s, annot, data_name, sdatatype, side_limit = side_limit)
+		tm_sig_glm_set <- make_tm_facs_signature_set(glm_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, side_limit = side_limit)
 		cat("\nSignature for Valdiation")
-		tm_sig_val_set <- make_tm_facs_signature_set(val_list, s, annot, data_name, sdatatype, side_limit = side_limit)
-		tm_att_set <- make_tm_facs_attribute_set(zsl_list, s, annot, mincell, data_name, sdatatype, ngene = Ngene, fdrthr = fdrthr)
+		tm_sig_val_set <- make_tm_facs_signature_set(val_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, side_limit = side_limit)
+		tm_att_set <- make_tm_facs_attribute_set(zsl_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, mincellcount, ngene = Ngene, fdrthr = fdrthr, simthres = simthres, norm = side_norm)
 
 		meta <- create_meta_index_av(tm_att_set, tm_sig_glm_set, ncore = ncore)
 		logistic_res <- tm_facs_logistic(tm_att_set, meta, tm_sig_val_set, Tissue_opt = tissue_opt, celltype_specific = Celltype_specific)

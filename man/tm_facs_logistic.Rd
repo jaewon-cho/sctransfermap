@@ -4,8 +4,13 @@
 \alias{tm_facs_logistic}
 \title{tm_facs_logistic}
 \usage{
-tm_facs_logistic(att_set, meta_model, sig_set, Tissue_opt = FALSE,
-  celltype_specific = FALSE)
+tm_facs_logistic(
+  att_set,
+  meta_model,
+  sig_set,
+  Tissue_opt = FALSE,
+  celltype_specific = FALSE
+)
 }
 \arguments{
 \item{att_set}{attribute set}

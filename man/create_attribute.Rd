@@ -4,11 +4,30 @@
 \alias{create_attribute}
 \title{create_attribute}
 \usage{
-create_attribute(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
-  Sdatatype, w2v_index = FALSE, Xdatatype = "scRNA-seq", Ngene = 64,
-  Stopwords = stopwords, Fdrthr = 0.1, Gamma = 1, Lambda = 1,
-  Xpeaks = FALSE, Sep = "_", Mincellcount = 10, Mincellfrac = 0.01,
-  Simthres = -Inf, R_output = FALSE)
+create_attribute(
+  Name,
+  Tissue,
+  Expr,
+  Rowname,
+  Cellname,
+  side_info,
+  w2v_index = TRUE,
+  snames = c(),
+  stypenames = c(),
+  sdim = 200,
+  Xdatatype = "scRNA-seq",
+  Ngene = 64,
+  Fdrthr = 0.1,
+  Gamma = 1,
+  Lambda = 1,
+  Sep = "_",
+  Sdatatype = "w2v",
+  Mincellcount = 10,
+  Mincellfrac = 0,
+  Simthres = -Inf,
+  norm = "mean",
+  R_output = FALSE
+)
 }
 \arguments{
 \item{Name}{user-defined name for the output}
@@ -18,30 +37,33 @@ create_attribute(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
 \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
 }}
 
-\item{w2v}{word2vector object
-\itemize{
-\item output of make_w2v
-\item pre-existing side-information object (julia object) (ex: julia_obj$side_information) 
-\item output of generate_sideinformation
-}}
-
 \item{Expr}{expression/peak matrix (d <- make_input(input_var), d$norm_matrix)}
 
 \item{Rowname}{gene/peak_location of Expr (d<- make_input(input_var), d$rowname)}
 
 \item{Cellname}{cellname of Expr (d<- make_input(input_var), d$cellname)}
 
-\item{cell_ontology}{julia object of cell ontology (the result of make_cellontology)}
-
-\item{Sdatatype}{type of side-information (cell_ontology, ATAC-seq, or user-defined term)}
+\item{side_info}{matrix or w2v object depends on w2v_index
+\itemize{
+\item (gene or peak) matrix of side information (if w2v_index = FALSE)
+\item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+}}
 
 \item{w2v_index}{TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists}
 
-\item{Xdatatype}{type of Expr (scRNA-seq or scATAC-seq)}
+\item{snames}{gene/peak_location of matrix for side information (if w2v_index = FALSE)}
 
-\item{Ngene}{a number of vector size after JL transformation}
+\item{stypenames}{cellname of matrix for side information (if w2v_index = FALSE)}
 
-\item{Stopwords}{julia object of stopwords (the result of make_stopwords)}
+\item{sdim}{a number of vector size after JL transformation for side information}
+
+\item{Xdatatype}{type of Expr 
+\itemize{
+\item scRNA-seq 
+\item scATAC-seq
+}}
+
+\item{Ngene}{a number of vector size after JL transformation for "X" matrix}
 
 \item{Fdrthr}{fdr threshold for calculating similarity score during training}
 
@@ -49,16 +71,30 @@ create_attribute(Name, Tissue, w2v, Expr, Rowname, Cellname, cell_ontology,
 
 \item{Lambda}{parameter for ZSL}
 
-\item{Xpeaks}{TRUE if data type of x (and Expr) is ATAC-seq}
-
 \item{Sep}{delimiter for peak_location\cr
 ex: chr1_3084739_3085712 (make sure delimiter for peak_location of data must be "_")}
+
+\item{Sdatatype}{type of side-information 
+\itemize{
+\item w2v (cell ontology)
+\item scRNA-seq
+\item scATAC-seq
+}}
 
 \item{Mincellcount}{minimum cell count for a given cell type for training}
 
 \item{Mincellfrac}{minimum fraction of cell type for training}
 
 \item{Simthres}{initial similarity threshold}
+
+\item{norm}{normalization method for word2vector
+\itemize{
+\item "mean"
+\item "median"
+\item "max"
+\item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+\item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+}}
 
 \item{R_output}{TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object}
 }
@@ -69,10 +105,17 @@ an attribute for ZSL (trained data) (julia object)
 make attribute object for ZSL (trained data)
 }
 \examples{
+1) Side information: Cell Ontology
 d <- make_input(matrix, train = TRUE)
 w2v <- make_w2v("Pubmed_index")
 annot <- make_cellontology("cell ontology file")
 stopwords <- make_stopwords(stopwords)
-att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, annot, "cell_ontology", w2v_index = TRUE)
+w2v_side <- make_w2v_sideinfo(w2v, annot, stopwords)
+att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, w2v_side)
+
+2) Side information: scRNA-seq (or scATAC-seq, etc...)
+d <- make_input(matrix1, train = TRUE)
+sideinfo <- make_input(matrix2, train = TRUE)
+att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, sideinfo$norm_matrix, w2v_index = FALSE, snames = sideinfo$rowname, stypenames = sideinfo$cellname, sdatatype = "scRNA-seq")
 
 }
