@@ -117,6 +117,9 @@ julia_environment <- function(julia_obj_index = FALSE){
 	julia_install_package_if_needed("Compose")
 	julia_install_package_if_needed("Gadfly")
 	julia_install_package_if_needed("JLD")
+	julia_install_package_if_needed("MultivariateStats")
+	julia_install_package_if_needed("LIBSVM")
+#	julia_install_package_if_needed("StatsModels")
 
 	cat("\nimporting Julia packages ... \n")
 	julia_library("DelimitedFiles")
@@ -130,6 +133,8 @@ julia_environment <- function(julia_obj_index = FALSE){
 	julia_library("Compose")
 	julia_library("Gadfly")
 	julia_library("JLD")
+	julia_library("MultivariateStats")
+	julia_library("LIBSVM")
 
 	cat("\nloading core functions from Julia\n")
 	julia_source(system.file("CoreFunction.jl", package = "sctransfermap"))
@@ -406,15 +411,15 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 	genesize <- dim(d)[2]
 	genes <- rowSums(d!=0) / genesize
 
+	genes_order <- order(genes, decreasing = TRUE)
+	d <- d[genes_order,]
+	genes <- genes[genes_order]
+	genes_cond <- which(genes > min_thr & genes < max_thr)
+	d <- d[genes_cond,]
 	d_tmp <- d
+
 #hadamard matrix is only needed in trainset
-	if (train) {
-		genes_order <- order(genes, decreasing = TRUE)
-		d <- d[genes_order,]
-		genes <- genes[genes_order]
-		genes_cond <- which(genes > min_thr & genes < max_thr)
-		d_tmp <- d[genes_cond,]
-	
+	if (train){	
 		tmp_cnt <- dim(d_tmp)[1]
 		hadamard_number <- 512 * round(floor(tmp_cnt/512))
 	
@@ -477,7 +482,6 @@ make_input <- function(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1.0
 	genename <- rownames(d)
 	celltype <- sort(unique(cellname))
 
-	d<-as.matrix(d)
 	rownames(d) <- NULL
 	colnames(d) <- NULL
 	res_list <- list(d, genename, cellname, celltype)
@@ -592,6 +596,7 @@ make_cellontology <- function(cell_ontology, celltype = c()){
 #' \item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
 #' \item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
 #' }
+#' @param thresholding_by_all whether uses all the cell types during estimating similarity threshold or not 
 #' @param R_output TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object
 #'
 #' @return an attribute for ZSL (trained data) (julia object)
@@ -608,10 +613,10 @@ make_cellontology <- function(cell_ontology, celltype = c()){
 #' 2) Side information: scRNA-seq (or scATAC-seq, etc...)
 #' d <- make_input(matrix1, train = TRUE)
 #' sideinfo <- make_input(matrix2, train = TRUE)
-#' att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, sideinfo$norm_matrix, w2v_index = FALSE, snames = sideinfo$rowname, stypenames = sideinfo$cellname, sdatatype = "scRNA-seq")
+#' att <- create_attribute("user", "Heart", d$norm_matirx, d$rowname, d$cellname, sideinfo$norm_matrix, w2v_index = FALSE, snames = sideinfo$rowname, stypenames = sideinfo$cellname, Sdatatype = "scRNA-seq")
 #' 
 #' @export
-create_attribute <- function(Name, Tissue, Expr, Rowname, Cellname, side_info, w2v_index = TRUE, snames = c(), stypenames = c(), sdim = 200, Xdatatype = "scRNA-seq", Ngene = 64, Fdrthr = 0.1, Gamma = 1.0, Lambda = 1.0, Sep = "_", Sdatatype = "w2v", Mincellcount = 10, Mincellfrac = 0.0, Simthres = -Inf, norm = "mean", R_output = FALSE){
+create_attribute <- function(Name, Tissue, Expr, Rowname, Cellname, side_info, w2v_index = TRUE, snames = c(), stypenames = c(), sdim = 200, Xdatatype = "scRNA-seq", Ngene = 64, Fdrthr = 0.1, Gamma = 1.0, Lambda = 1.0, Sep = "_", Sdatatype = "w2v", Mincellcount = 10, Mincellfrac = 0.0, Simthres = -Inf, norm = "mean", thresholding_by_all = TRUE, jl_index = TRUE, R_output = FALSE){
 	name <- JuliaObject(Name)
 	tissue <- JuliaObject(Tissue)
 	expr <- JuliaObject(Expr)
@@ -643,13 +648,15 @@ create_attribute <- function(Name, Tissue, Expr, Rowname, Cellname, side_info, w
 	mincellcount <- julia_call("Int64", Mincellcount, need_return = "Julia")
 	mincellfrac <- julia_call("Float64", Mincellfrac, need_return = "Julia")
 	norm <- JuliaObject(norm)	
+	thresholding_by_all <- JuliaObject(thresholding_by_all)
+	jl_index <- JuliaObject(jl_index)
 
 	cat("\nMaking model 'V' matrix by training data\n")
 	if (R_output){
-		Index_res <- julia_call("create_attribute", name, tissue, expr, rowname, cellname, xdatatype, ngene, fdrthr, gamma, lambda, sep, sdatatype, side_matrix, stypenames, snames, sdim, mincellfrac, mincellcount, simthres, norm, need_return = "R") 
+		Index_res <- julia_call("create_attribute", name, tissue, expr, rowname, cellname, xdatatype, ngene, fdrthr, gamma, lambda, sep, sdatatype, side_matrix, stypenames, snames, sdim, mincellfrac, mincellcount, simthres, norm, thresholding_by_all, jl_index, need_return = "R") 
 	}	
 	else {
-		Index_res <- julia_call("create_attribute", name, tissue, expr, rowname, cellname, xdatatype, ngene, fdrthr, gamma, lambda, sep, sdatatype, side_matrix, stypenames, snames, sdim, mincellfrac, mincellcount, simthres, norm, need_return = "Julia")
+		Index_res <- julia_call("create_attribute", name, tissue, expr, rowname, cellname, xdatatype, ngene, fdrthr, gamma, lambda, sep, sdatatype, side_matrix, stypenames, snames, sdim, mincellfrac, mincellcount, simthres, norm, thresholding_by_all, jl_index, need_return = "Julia")
 	}
 	return (Index_res)
 }
@@ -870,22 +877,27 @@ make_signature_set <- function(signature){
 #' - att_set: pre-existing attribute set
 #'
 #' @export
-predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, R_output = TRUE){
+predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, jl_index = TRUE, R_output = TRUE){
 	simthr <- JuliaObject(simthr)
 	gn_overlap_thr <- JuliaObject(gn_overlap_thr)
+	jl_index <- JuliaObject(jl_index)
 	cat("\nPredicting celltype by model from ZSL in consensus manner with various tissue\n")
 	if (R_output){
-		confusion_list <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, need_return = "R")
-
+		confusion_list <- julia_call("transfer_map_consensus", iscell, query, simthr, gn_overlap_thr, jl_index, need_return = "R")
 
 		confusion <- confusion_list[[1]]
-
 		#modify all_confusion
 		all_confusion <- as.matrix(confusion_list[[2]])
 		total_cell_name <- field(query, "celltypes")
 		stypename <- field(query, "stypenames")
+
+		tmp <- julia_call("unique", stypename, need_return = "Julia")
+		stypename <- julia_call("sort", tmp, need_return = "R")
+	
+
 		rownames(all_confusion) <- total_cell_name
 		colnames(all_confusion) <- stypename
+
 		all_confusion <- decorate_all_confusion(all_confusion)
 		#modify confusion
 		y <- table(field(query, "celltypes"))
@@ -896,8 +908,8 @@ predict_cell <- function(iscell, query, simthr = Inf, gn_overlap_thr = 0.5, R_ou
 		new_index <- r2julia_sort(y_cell_list, julia_cell_list)
 		y <- y[new_index]
 		cellnames <- y_cell_list[new_index]
-		confusion <- decorate_confusion(confusion, y, cellnames, stypename)
 
+		confusion <- decorate_confusion(confusion, y, cellnames, stypename)
 
 		confusion_list <- list(confusion, all_confusion)
 		names(confusion_list) <- c("confusion", "all_confusion")
@@ -1025,7 +1037,7 @@ confusion_ratio <- function(confusion) {
 #' @param conf confusion ratio matrix from confusion_ratio or just confusion matrix from predict_cell
 #' @param opt TRUE if conf is a confusion matrix and FALSE if conf is a confusion_ratio matrix
 #'
-#' @return True postivie rate and unassign ratio for each cell type, respectively 
+#' @return True postive rate and unassign ratio for each cell type, respectively 
 #'
 #' @examples
 #' confusion <- predict_cell(att_set, signature)
@@ -1083,7 +1095,7 @@ validation <- function(conf, opt = FALSE){
 #' meta_model <- create_meta_index_av(att_set, sig_set)
 #'
 #' @export
-create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, sep = "_", ncore = 1){
+create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, sep = "_", jl_index = TRUE, ncore = 1){
 	cat("\nCreating logistic regression model")
 	cat("\nGenerating ZSL results for stacking from each tissue\n")
 
@@ -1093,6 +1105,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, sep = "_"
 	start_time <- Sys.time()
 
 	gn_overlap_thr <- JuliaObject(gn_overlap_thr)
+	jl_index <- JuliaObject(jl_index)
 
 	zsl_tissue <- c()
 	stypename <- field(mscell[1], "stypenames")
@@ -1101,7 +1114,7 @@ create_meta_index_av <- function(iscell, mscell, gn_overlap_thr = 0.5, sep = "_"
 		query = mscell[q_index]
 		comment <- paste("\nTraining set: ", as.character(q_index), "/", as.character(length(mscell)), sep = "")
 		cat(comment)
-		meta_info <- julia_call("create_meta_index", iscell, query, sep, gn_overlap_thr, need_return = "R")
+		meta_info <- julia_call("create_meta_index", iscell, query, sep, gn_overlap_thr, jl_index, need_return = "R")
 		meta_table_tmp <- data.frame(meta_info[[1]])
 		if (first){
 		#	first = FALSE (after meta_table)

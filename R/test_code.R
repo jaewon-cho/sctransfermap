@@ -157,9 +157,8 @@ make_input_tm_facs <- function(data_list, gene_usage = FALSE, Train = TRUE, ncor
 	end_time <- Sys.time()
 	proc_time <- end_time - start_time
 	print(proc_time)
-	registerDoParallel(1)
+	gc()
 	return (tm_facs_input)
-
 }
 
 #' tissue_merge
@@ -247,6 +246,7 @@ make_tm_facs_signature_set <- function(tm_facs_input, data_name, side_info, w2v_
 			next
 		}
 		tm_facs_signature_set <- add_signature_set(d_sig, tm_facs_signature_set)
+
 	}
 	end_time <- Sys.time()
 	proc_time <- end_time - start_time
@@ -305,7 +305,7 @@ make_tm_facs_signature_set <- function(tm_facs_input, data_name, side_info, w2v_
 #' att_set <- make_tm_facs_attribute_set(tm_facs_input, "tabula_muris", sideinfo, w2v_index = FALSE, sdatatype = "scRNA-seq")
 #'
 #' @export
-make_tm_facs_attribute_set <- function(tm_facs_input, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 10, ngene = 64, fdrthr = 0.1, lambda = 1, gamma = 1, simthres = -Inf, norm = "mean"){
+make_tm_facs_attribute_set <- function(tm_facs_input, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 10, ngene = 64, fdrthr = 0.1, lambda = 1, gamma = 1, simthres = -Inf, norm = "mean", jl_index = TRUE){
 	start_time <- Sys.time()
 	head = TRUE
 	for (i in 1:length(tm_facs_input)){
@@ -315,10 +315,10 @@ make_tm_facs_attribute_set <- function(tm_facs_input, data_name, side_info, w2v_
 		d <- tm_facs_input[[i]]
 	
 		if (w2v_index){
-			d_att <- create_attribute(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info, Mincellcount = mincellcount, Ngene = ngene, Fdrthr = fdrthr, Gamma = gamma, Lambda = lambda, Simthres = simthres, norm = norm)
+			d_att <- create_attribute(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info, Mincellcount = mincellcount, Ngene = ngene, Fdrthr = fdrthr, Gamma = gamma, Lambda = lambda, Simthres = simthres, norm = norm, jl_index = jl_index)
 		}
 		else {
-			d_att <- create_attribute(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info$norm_matrix, w2v_index, snames = side_info$rowname, stypenames = side_info$cellname, sdatatype = sdatatype, Mincellcount = mincellcount, Ngene = ngene, Fdrthr = fdrthr,Gamma = gamma, Lambda = lambda, Simthres = simthres, norm = norm)	
+			d_att <- create_attribute(data_name, tissue_name, d[[1]], d[[2]], d[[3]], side_info$norm_matrix, w2v_index, snames = side_info$rowname, stypenames = side_info$cellname, sdatatype = sdatatype, Mincellcount = mincellcount, Ngene = ngene, Fdrthr = fdrthr,Gamma = gamma, Lambda = lambda, Simthres = simthres, norm = norm, jl_index = jl_index)	
 		}
 		if (head){
 			tm_facs_att_set <- make_attribute_set(d_att)
@@ -355,7 +355,7 @@ make_tm_facs_attribute_set <- function(tm_facs_input, data_name, side_info, w2v_
 #' res <- leave_one_val(att_set, sig_set)
 #'
 #' @export
-leave_one_val <-function(att_set, sig_set){
+leave_one_val <-function(att_set, sig_set, jl_index){
 	start_time <- Sys.time()
 	res_list <- list()
 	ratio_list <- list()
@@ -369,11 +369,53 @@ leave_one_val <-function(att_set, sig_set){
 
 		tmp_tissue <- field(sig_set[i], "tissue")
 		print(tmp_tissue)
-		tmp_res_list <- predict_cell(new_iscell, sig_set[i])
+		tmp_res_list <- predict_cell(new_iscell, sig_set[i], jl_index=jl_index)
 		tmp_res <- tmp_res_list[[1]]
 
 		tmp_ratio <- confusion_ratio(tmp_res)
 		tmp_val <- validation(tmp_res, opt = TRUE)		
+		res_list[[i]] <- tmp_res
+		ratio_list[[i]] <- tmp_ratio
+		val_list[[i]] <- tmp_val
+		tissue_list <- c(tissue_list, tmp_tissue)
+		tmp_val_sample <- validation_sample(tmp_res)
+		f1_score <- tmp_val_sample[[1]]
+		unassign <- tmp_val_sample[[2]]
+
+		f1_list <- c(f1_list, f1_score)
+		unassign_list <- c(unassign_list, unassign)
+
+	}
+
+	names(f1_list) <- rep("F1", length(f1_list))
+
+	end_time <- Sys.time()
+	proc_time <- end_time - start_time
+	print(proc_time)
+	total_res_list <- list(res_list, ratio_list, val_list, tissue_list, f1_list, unassign_list)
+	names(total_res_list) <- c("conf_list", "conf_ratio_list", "val_list", "tissue_list", "f1_list", "unassign_list")
+	return (total_res_list)
+}
+
+
+self_val <-function(att_set, sig_set, jl_index){
+	start_time <- Sys.time()
+	res_list <- list()
+	ratio_list <- list()
+	val_list <- list()
+	tissue_list <- c()
+	f1_list <- c()
+	unassign_list <- c()
+	for (i in 1:length(att_set)){
+		new_iscell <- make_attribute_set(att_set[i])
+
+		tmp_tissue <- field(sig_set[i], "tissue")
+		print(tmp_tissue)
+		tmp_res_list <- predict_cell(new_iscell, sig_set[i], jl_index = jl_index)
+		tmp_res <- tmp_res_list[[1]]
+
+		tmp_ratio <- confusion_ratio(tmp_res)
+		tmp_val <- validation(tmp_res, opt = TRUE)
 		res_list[[i]] <- tmp_res
 		ratio_list[[i]] <- tmp_ratio
 		val_list[[i]] <- tmp_val
@@ -421,9 +463,18 @@ validation_sample <- function(conf){
 	total_true <- sum(conf)
 	total_positive <- sum(conf[,2:dim(conf)[2]])
 	tmp_tp <- colSums(validation(conf))[1]
-	
-	precision <- tmp_tp / total_positive
+
+	tmp_tp <- as.numeric(tmp_tp)
+
+	if (total_positive == 0){
+		precision <- 0
+	}
+	else{		
+		precision <- tmp_tp / total_positive
+	}
 	recall <- tmp_tp / total_true
+
+
 	if (precision == 0 & recall == 0){
 		f1_score <- 0
 	}
@@ -578,7 +629,7 @@ tm_facs_logistic <- function(att_set, meta_model, sig_set, Tissue_opt = FALSE, c
 #' res <- n_fold_zsl(tm_facs, 2048, "user", side_info, w2v_index = FALSE, sdatatype = "scRNA-seq")
 #'
 #' @export
-n_fold_zsl <- function(tm_facs, Gene_usage, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 10, Ngene = 64, fdrthr = 0.1, simthres = -Inf, n = 5, side_limit = FALSE, norm = "log", side_norm = "mean"){
+n_fold_zsl <- function(tm_facs, Gene_usage, data_name, side_info, w2v_index = TRUE, sdatatype = "w2v", mincellcount = 0, Ngene = 64, fdrthr = 0.1, simthres = -Inf, n = 5, side_limit = FALSE, norm = "log", side_norm = "mean", jl_index = TRUE){
 	start_time <- Sys.time()	
 	n_fold_res <- list()
 	res_list <- list()
@@ -588,7 +639,7 @@ n_fold_zsl <- function(tm_facs, Gene_usage, data_name, side_info, w2v_index = TR
 	f1_list <- c()
 	unassign_list <- c()
 
-	for (n_index in 5:n){
+	for (n_index in 1:n){
 		paste("\n\n", n_index, "/",  n, "-fold change test round\n\n", sep = "")
 		val_list <- list()
 		zsl_list <- list()
@@ -641,13 +692,14 @@ n_fold_zsl <- function(tm_facs, Gene_usage, data_name, side_info, w2v_index = TR
 			names(zsl_list)[i] <- tissue_name
 		}
 		sig_set <- make_tm_facs_signature_set(val_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, side_limit = side_limit)
-		att_set <- make_tm_facs_attribute_set(zsl_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, mincellcount, ngene = Ngene, fdrthr = fdrthr, simthres = simthres, norm = side_norm)
+		att_set <- make_tm_facs_attribute_set(zsl_list, data_name, side_info, w2v_index = w2v_index, sdatatype = sdatatype, mincellcount, ngene = Ngene, fdrthr = fdrthr, simthres = simthres, norm = side_norm, jl_index = jl_index)
 	
 
 		for (i in 1:length(sig_set)){
+			new_iscell <- make_attribute_set(att_set[i])
 			tmp_tissue <- field(sig_set[i], "tissue")
 			print(tmp_tissue)
-			tmp_res_list <- predict_cell(att_set[i], sig_set[i])
+			tmp_res_list <- predict_cell(new_iscell, sig_set[i], jl_index = jl_index)
 			tmp_res <- tmp_res_list[[1]]
 
 			tmp_ratio <- confusion_ratio(tmp_res)

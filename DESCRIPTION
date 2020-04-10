@@ -21,5 +21,6 @@ Imports:
 	Seurat,
 	Matrix,
 	SingleCellExperiment,
-	JuliaCall
+	JuliaCall,
+	MASS
 RoxygenNote: 7.0.1
