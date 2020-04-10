@@ -21,5 +21,6 @@ Imports:
 	Seurat,
 	Matrix,
 	SingleCellExperiment,
-	JuliaCall
-RoxygenNote: 6.1.1
+	JuliaCall,
+	MASS
+RoxygenNote: 7.0.1

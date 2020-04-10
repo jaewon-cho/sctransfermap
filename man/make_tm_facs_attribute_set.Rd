@@ -4,21 +4,35 @@
 \alias{make_tm_facs_attribute_set}
 \title{make_tm_facs_attribute_set}
 \usage{
-make_tm_facs_attribute_set(tm_facs_input, s, annot, mincell, data_name,
-  sdatatype, ngene = 64, fdrthr = 0.1, lambda = 1, gamma = 1)
+make_tm_facs_attribute_set(
+  tm_facs_input,
+  data_name,
+  side_info,
+  w2v_index = TRUE,
+  sdatatype = "w2v",
+  mincellcount = 10,
+  ngene = 64,
+  fdrthr = 0.1,
+  lambda = 1,
+  gamma = 1,
+  simthres = -Inf,
+  norm = "mean"
+)
 }
 \arguments{
 \item{tm_facs_input}{the result of make_input_tm_facs}
 
-\item{s}{side-information (jula object)}
-
-\item{annot}{cell ontology (julia object)}
-
-\item{mincell}{TRUE if user wants to give minimum cell type thresholding}
-
 \item{data_name}{name for the attribute}
 
-\item{sdatatype}{type of side-information (cell_ontology, ATAC-seq, or user-defined term)}
+\item{side_info}{matrix or w2v object depends on w2v_index
+\itemize{
+\item (gene or peak) matrix of side information (if w2v_index = FALSE)
+\item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+}}
+
+\item{w2v_index}{TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists}
+
+\item{mincellcount}{minimum cell count for a given cell type for training}
 
 \item{ngene}{a number of vector size after JL transformation}
 
@@ -27,6 +41,24 @@ make_tm_facs_attribute_set(tm_facs_input, s, annot, mincell, data_name,
 \item{lambda}{parameter for ZSL}
 
 \item{gamma}{paramter for ZSL}
+
+\item{simthres}{initial similarity threshold}
+
+\item{norm}{normalization method for word2vector
+\itemize{
+\item "mean"
+\item "median"
+\item "max"
+\item "weighted_sum": a + b/2 + c/3 + d/4 + ... (for sorted scores)
+\item "weighted_abs_sum": a + b/2 + c/3 + d/4 + ... (for absoluted sorted scores)
+}}
+
+\item{Sdatatype}{type of side-information
+\itemize{
+\item w2v (cell ontology)
+\item scRNA-seq
+\item scATAC-seq
+}}
 }
 \value{
 attribute set
@@ -35,11 +67,17 @@ attribute set
 creating attribute set from the result of make_input_tm_facs
 }
 \examples{
+1) Side information: Cell Ontology
 tm_facs_input <- make_input_tm_facs(tm_facs)
 w2v <- make_w2v("Pubmed.index")
-cell_ontology <- make_cellontology("cell_ontogloy_file")
+annot <- make_cellontology("cell_ontogloy_file")
 stopword <- make_stopwords(stopwords)
-side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-sig_set <- make_tm_facs_attribute_set(tm_facs_input, side_info, cell_ontology, FALSE, "user", "cell_ontology")
+w2v_side <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
+att_set <- make_tm_facs_attribute_set(tm_facs_input, "tabula_muris", w2v_side)
+
+2) Side information: scRNA-seq (or scATAC-seq, etc ...)
+tm_facs_input <- make_input_tm_facs(tm_facs)
+sideinfo <- make_input(matrix, train = TRUE)
+att_set <- make_tm_facs_attribute_set(tm_facs_input, "tabula_muris", sideinfo, w2v_index = FALSE, sdatatype = "scRNA-seq")
 
 }

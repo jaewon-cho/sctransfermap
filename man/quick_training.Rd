@@ -4,7 +4,7 @@
 \alias{quick_training}
 \title{quick_training}
 \usage{
-quick_training(input_var, name, tissue)
+quick_training(input_var, name, tissue, xdatatype)
 }
 \arguments{
 \item{input_var}{matrix class composed of gene/peak_location(row)-by-cell(column)\cr
@@ -15,6 +15,12 @@ quick_training(input_var, name, tissue)
 \item{tissue}{tissue of the sample (please make sure the word of tissue must be same as pre-existing tissue list. If it is new tissue type, it doesn't matter)
 \itemize{ 
 \item Mouse: Aorta, Brain, Diaphragm, Fat, Heart, Kidney, LargeIntestine, LimbMuscle, Liver, Lung, MammaryGland, Marrow, Pancreas, Skin, Spleen, Thymus, Tongue, Trachea
+}}
+
+\item{Xdatatype}{type of Expr
+\itemize{
+\item scRNA-seq
+\item scATAC-seq
 }}
 }
 \value{

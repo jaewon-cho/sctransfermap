@@ -4,10 +4,12 @@
 \alias{validation}
 \title{validation}
 \usage{
-validation(conf_ratio)
+validation(conf, opt = FALSE)
 }
 \arguments{
-\item{conf_ratio}{confusion ratio matrix from confusion_ratio}
+\item{conf}{confusion ratio matrix from confusion_ratio or just confusion matrix from predict_cell}
+
+\item{opt}{TRUE if conf is a confusion matrix and FALSE if conf is a confusion_ratio matrix}
 }
 \value{
 True postivie rate and unassign ratio for each cell type, respectively
@@ -17,7 +19,6 @@ validation of known data
 }
 \examples{
 confusion <- predict_cell(att_set, signature)
-conf_ratio <- confusion_ratio(conf_ratio)
-conf_val <- validation(conf_ratio)
+conf_val <- validation(confusion, opt = TRUE)
 
 }

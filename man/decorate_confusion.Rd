@@ -4,7 +4,7 @@
 \alias{decorate_confusion}
 \title{decorate_confusion}
 \usage{
-decorate_confusion(confusion, y, cellnames, sname)
+decorate_confusion(confusion, y, cellnames, stypename)
 }
 \arguments{
 \item{confusion}{confusion matrix from "transfer_map_consensus" function in Julia}
@@ -14,7 +14,7 @@ decorate_confusion(confusion, y, cellnames, sname)
 
 \item{cellnames}{cell type of query data}
 
-\item{sname}{cell type of side-information}
+\item{stypename}{cell type of side-information}
 }
 \value{
 a confusion matrix that has unassign count

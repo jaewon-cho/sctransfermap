@@ -4,8 +4,15 @@
 \alias{make_input}
 \title{make_input}
 \usage{
-make_input(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1,
-  train = FALSE, gene_usage = FALSE)
+make_input(
+  input_var,
+  min_thr = 0.1,
+  max_thr = 0.9,
+  pseudo_cnt = 1,
+  train = FALSE,
+  gene_usage = FALSE,
+  norm = "log"
+)
 }
 \arguments{
 \item{input_var}{matrix class composed of gene/peak_location(row)-by-cell(column)\cr
@@ -27,6 +34,15 @@ make_input(input_var, min_thr = 0.1, max_thr = 0.9, pseudo_cnt = 1,
 \itemize{
 \item FALSE: gene/peak_location filtering by discarding low expressing cell ratio genes/peak_locations
 \item certain number (ex: 2048): the number of gene to use for training (must be suitable number to generate hadamard matrix)
+}}
+
+\item{norm}{normalization options for matrix
+\itemize{
+\item "log": log-normalization after gene filtering(with pseudo count)
+\item "raw": just uses count matrix after gene filtering
+\item "total": divide by total count of each cell, respectively (before gene filtering)
+\item "z": z-normalization after gene filtering
+\item "total_log": "total" -> "log" normalization before gene filtering (with pseudo count)
 }}
 }
 \value{

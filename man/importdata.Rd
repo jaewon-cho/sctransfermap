@@ -4,8 +4,14 @@
 \alias{importdata}
 \title{importdata}
 \usage{
-importdata(file, opt = "raw", datatype = "RNAseq",
-  colname_file = FALSE, rowname_file = FALSE, row_opt = 1)
+importdata(
+  file,
+  opt = "raw",
+  datatype = "scRNA-seq",
+  colname_file = FALSE,
+  rowname_file = FALSE,
+  row_opt = 1
+)
 }
 \arguments{
 \item{file}{file of the single-cell data (ex: scRNA-seq, scATAC-seq)}
@@ -17,7 +23,7 @@ importdata(file, opt = "raw", datatype = "RNAseq",
 \item sparse: MatrixMarket format (written by writeMM)
 }}
 
-\item{datatype}{"RNAseq" or "atac"}
+\item{datatype}{"scRNA-seq" or "scATAC-seq"}
 
 \item{colname_file}{colname_file for sparse matrix (usually cell name), when opt is "sparse". Otherwise, it is FALSE}
 

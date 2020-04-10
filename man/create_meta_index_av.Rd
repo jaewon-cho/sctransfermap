@@ -16,10 +16,10 @@ create_meta_index_av(iscell, mscell, gn_overlap_thr = 0.5, ncore = 1)
 \item{ncore}{number of cores for multi-threading}
 }
 \value{
-return list composed of (model_list, sname, zsl_tissue, meta_column_name)
+return list composed of (model_list, stypename, zsl_tissue, meta_column_name)
 \itemize{
 \item model_list: logistic regression model (composed of predicting cell and corresponding coefficients)
-\item sname: cell types that are used in each coefficient (T cell, B cell, fibroblast ....)
+\item stypename: cell types that are used in each coefficient (T cell, B cell, fibroblast ....)
 \item zsl_tissue: tissue types that are used in logistic regression (Lung, Heart ...)
 \item meta_column_name: pseudo name of variables in logistic regression (Heart_cell1, Heart_cell2...)
 }

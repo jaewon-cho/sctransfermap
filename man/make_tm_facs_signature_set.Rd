@@ -4,18 +4,36 @@
 \alias{make_tm_facs_signature_set}
 \title{make_tm_facs_signature_set}
 \usage{
-make_tm_facs_signature_set(tm_facs_input, s, annot, data_name, sdatatype)
+make_tm_facs_signature_set(
+  tm_facs_input,
+  data_name,
+  side_info,
+  w2v_index = TRUE,
+  sdatatype = "w2v",
+  side_limit = FALSE
+)
 }
 \arguments{
 \item{tm_facs_input}{result of make_input_tm_facs}
 
-\item{s}{side-infomration (julia object)}
-
-\item{annot}{cell_ontology (julia object)}
-
 \item{data_name}{name for the signature}
 
-\item{sdatatype}{type of side-information (cell_ontology, ATAC-seq, or user-defined term)}
+\item{side_info}{matrix or w2v object depends on w2v_index
+\itemize{
+\item (gene or peak) matrix of side information (if w2v_index = FALSE)
+\item w2v_side: result of make_w2v_sideinfo (if w2v_index = TRUE)
+}}
+
+\item{w2v_index}{TRUE if user needs to make side-information from cell ontology. FALSE if julia object of side-information exists}
+
+\item{sdatatype}{type of side-information
+\itemize{
+\item w2v (cell ontology)
+\item scRNA-seq
+\item scATAC-seq
+}}
+
+\item{side_limit}{TRUE if user wants to limit their side information as cell types in input data, respectively (and min cell fraction threshold)}
 }
 \value{
 signature set
@@ -24,11 +42,17 @@ signature set
 creating signature set from result of make_input_tm_facs
 }
 \examples{
+1) Side information: Cell Ontology
 tm_facs_input <- make_input_tm_facs(tm_facs)
 w2v <- make_w2v("Pubmed.index")
 cell_ontology <- make_cellontology("cell_ontogloy_file")
 stopword <- make_stopwords(stopwords)
-side_info <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
-sig_set <- make_tm_facs_signature_set(tm_facs_input, side_info, cell_ontology, "user", "cell_ontology")
+w2v_side <- make_w2v_sideinfo(w2v, cell_ontology, stopword)
+sig_set <- make_tm_facs_signature_set(tm_facs_input, "tabula_muris", w2v_side)
+
+2) Side information: scRNA-seq (or scATAC-seq, etc...)
+tm_facs_input <- make_input_tm_facs(tm_facs)
+sideinfo <- make_input(matrix, train = TRUE)
+sig_set <- make_tm_facs_signature_set(tm_facs_input, "tabula_muris", sideinfo, w2v_index = FALSE, sdatatype = "scRNA-seq")
 
 }

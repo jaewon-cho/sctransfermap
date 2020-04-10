@@ -4,8 +4,13 @@
 \alias{predict_cell}
 \title{predict_cell}
 \usage{
-predict_cell(iscell, query, simthr = Inf, gn_overlap_thr = 0.5,
-  R_output = TRUE)
+predict_cell(
+  iscell,
+  query,
+  simthr = Inf,
+  gn_overlap_thr = 0.5,
+  R_output = TRUE
+)
 }
 \arguments{
 \item{iscell}{attribute set}
@@ -19,11 +24,10 @@ predict_cell(iscell, query, simthr = Inf, gn_overlap_thr = 0.5,
 \item{R_output}{TRUE if the result of the function should be R object. FALSE if the result of the function should be julia object}
 }
 \value{
-a confusion matrix of prediction result
+return 2 confusion matrix
 \itemize{
-\item row: query cell type or cluster name
-\item column: cell types in side-information (from query)
-\item first column: unassign count
+\item confusion: a confusion matrix of prediction result
+\item all_confusion: a summarized matrix of prediction result in each cell
 }
 }
 \description{

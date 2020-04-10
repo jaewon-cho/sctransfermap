@@ -4,9 +4,15 @@
 \alias{logistic_prediction_cell}
 \title{logistic_prediciton_cell}
 \usage{
-logistic_prediction_cell(iscell, meta_model_list, query,
-  gn_overlap_thr = 0.5, logistic_thr = 0.5, tissue_opt = FALSE,
-  celltype_specific = FALSE)
+logistic_prediction_cell(
+  iscell,
+  meta_model_list,
+  query,
+  gn_overlap_thr = 0.5,
+  logistic_thr = 0.5,
+  tissue_opt = FALSE,
+  celltype_specific = FALSE
+)
 }
 \arguments{
 \item{iscell}{attribute set}
@@ -27,7 +33,7 @@ logistic_prediction_cell(iscell, meta_model_list, query,
 return 2 confusion matrix 
 \itemize{
 \item confusion: a confusion matrix of prediction result
-\item all_confusion: a confusion matrix of prediction result in each cell
+\item all_confusion: a summarized matrix of prediction result in each cell
 }
 }
 \description{
